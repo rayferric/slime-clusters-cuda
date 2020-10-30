@@ -8,46 +8,46 @@
 
 class Random {
 public:
-	CUDA Random(const LCG &lcg, uint64_t seed) : lcg(lcg) {
-		set_seed(seed);
-	}
+    CUDA Random(const LCG &lcg, uint64_t seed) : lcg(lcg) {
+        set_seed(seed);
+    }
 
     CUDA void scramble(const LCG &lcg) {
-		seed = lcg.scramble(seed);
-	}
+        seed = lcg.scramble(seed);
+    }
 
     CUDA void scramble() {
-		scramble(lcg);
-	}
+        scramble(lcg);
+    }
 
     CUDA void skip() {
-		seed = lcg.next(seed);
-	}
+        seed = lcg.next(seed);
+    }
 
     CUDA void skip(int32_t step) {
-		seed = lcg.of_step(step).next(seed);
-	}
+        seed = lcg.of_step(step).next(seed);
+    }
 
     CUDA LCG get_lcg() const {
-		return lcg;
-	}
+        return lcg;
+    }
 
     CUDA void set_lcg(const LCG &lcg) {
-		this->lcg = lcg;
-	}
+        this->lcg = lcg;
+    }
 
     CUDA uint64_t get_seed() const {
-		return seed;
-	}
+        return seed;
+    }
 
     CUDA void set_seed(uint64_t seed) {
-		this->seed = lcg.mod(seed);
-	}
+        this->seed = lcg.mod(seed);
+    }
 
     CUDA uint64_t next_seed() {
-		skip();
-		return seed;
-	}
+        skip();
+        return seed;
+    }
 protected:
     LCG lcg;
     uint64_t seed;
