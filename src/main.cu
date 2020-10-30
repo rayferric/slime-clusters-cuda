@@ -26,7 +26,7 @@
 
 // Where to start and how far to explore:
 #define WORK_OFFSET 0
-#define WORK_SIZE (1UI64 << 48)
+#define WORK_SIZE (1UI64 << 16)
 
 // Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
@@ -34,7 +34,7 @@
 #define REPORT_DELAY 10000
 #define LOG_FILE "clusters.txt"
 
-#define EXTENTS 512
+#define EXTENTS 128
 #define MIN_CLUSTER_SIZE 20
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
@@ -146,9 +146,16 @@ void manage_device(int32_t device_index) {
     cudaGetDeviceProperties(&prop, device_index);
     int32_t pref_threads = prop.maxThreadsPerMultiProcessor * prop.multiProcessorCount;
     info(device_index, "Preferred number of threads: " + std::to_string(pref_threads));
+
     int32_t block_size = prop.maxThreadsPerMultiProcessor / PREF_BLOCKS_PER_SM;
     if(block_size > prop.maxThreadsPerBlock)
         block_size = prop.maxThreadsPerBlock;
+
+    // Round to the smaller multiple of warp size:
+    block_size /= prop.warpSize;
+    block_size *= prop.warpSize;
+
+    info(device_index, "Threads per block: " + std::to_string(block_size));
 
 
     // Found items are collected in video memory.
