@@ -49,10 +49,10 @@ CUDA bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk
     world_seed += chunk_z * 0x5F24F;
     world_seed ^= 0x3AD8025FUI64;
 
-    // rand->set_seed(world_seed);
-    // rand->scramble();
-    // return rand->next_int(10) == 0;
-    return ((uint64_t)((((world_seed ^ 0x5DEECE66DUI64) & ((1UI64 << 48) - 1)) * 0x5DEECE66DUI64 + 0xB) & ((1UI64 << 48) - 1)) >> 17) % 10 == 0;
+    rand->set_seed(world_seed);
+    rand->scramble();
+    return rand->next_int(10) == 0;
+    // return ((uint64_t)((((world_seed ^ 0x5DEECE66DUI64) & ((1UI64 << 48) - 1)) * 0x5DEECE66DUI64 + 0xB) & ((1UI64 << 48) - 1)) >> 17) % 10 == 0;
 }
 
 CUDA int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {

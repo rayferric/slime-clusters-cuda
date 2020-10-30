@@ -1,6 +1,7 @@
 #ifndef BIT_FIELD_H
 #define BIT_FIELD_H
 
+#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -25,7 +26,7 @@ public:
         delete[] array;
     }
 
-    std::string to_string() {
+    std::string to_string() const {
         std::string builder;
         builder.reserve(size);
 
@@ -39,8 +40,8 @@ public:
         return new BitField(array, size);
     }
 
-    CUDA bool get(uint64_t index) {
-        //assert(index < size && "Index is out of bounds.");
+    CUDA bool get(uint64_t index) const {
+        assert(index < size && "Index is out of bounds.");
 
         size_t array_index = index / UINT64_BITS;
         int32_t bit_offset = (int32_t)(index % UINT64_BITS);
@@ -49,7 +50,7 @@ public:
     }
 
     CUDA void set(uint64_t index, bool state) {
-        //assert(index < size && "Index is out of bounds.");
+        assert(index < size && "Index is out of bounds.");
 
         size_t array_index = index / UINT64_BITS;
         int32_t bit_offset = (int32_t)(index % UINT64_BITS);
