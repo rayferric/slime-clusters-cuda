@@ -26,7 +26,7 @@
 
 // Where to start and how far to explore:
 #define WORK_OFFSET 0
-#define WORK_SIZE (1UI64 << 16)
+#define WORK_SIZE (1UI64 << 48)
 
 // Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
@@ -34,7 +34,7 @@
 #define REPORT_DELAY 10000
 #define LOG_FILE "clusters.txt"
 
-#define EXTENTS 128
+#define EXTENTS 512
 #define MIN_CLUSTER_SIZE 20
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
