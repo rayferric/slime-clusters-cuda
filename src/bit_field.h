@@ -13,7 +13,7 @@
 class BitField {
 public:
     // Constructs a zero bit field. Deleting this object also frees the internal array.
-    CUDA BitField(uint64_t size) : size(size), wrapper(false) {
+    CUDA_CALL BitField(uint64_t size) : size(size), wrapper(false) {
         // Equivalent to: ceil(size / 64)
         size_t array_size = ((size + (UINT64_BITS - 1)) / UINT64_BITS);
 
@@ -21,7 +21,7 @@ public:
         memset(array, 0, array_size * sizeof(uint64_t));
     }
 
-    CUDA ~BitField() {
+    CUDA_CALL ~BitField() {
         if(!wrapper)
             delete[] array;
     }
@@ -37,11 +37,11 @@ public:
     }
 
     // Constructs a wrapper bit field. Deleting this object does not free the wrapped array.
-    CUDA static BitField *wrap(uint64_t *array, uint64_t size) {
+    CUDA_CALL static BitField *wrap(uint64_t *array, uint64_t size) {
         return new BitField(array, size);
     }
 
-    CUDA bool get(uint64_t index) const {
+    CUDA_CALL bool get(uint64_t index) const {
         assert(index < size && "Index is out of bounds.");
 
         size_t array_index = index / UINT64_BITS;
@@ -50,7 +50,7 @@ public:
         return ((array[array_index] >> bit_offset) & 1) == 1;
     }
 
-    CUDA void set(uint64_t index, bool state) {
+    CUDA_CALL void set(uint64_t index, bool state) {
         assert(index < size && "Index is out of bounds.");
 
         size_t array_index = index / UINT64_BITS;
@@ -62,7 +62,7 @@ public:
             array[array_index] &= ~(1UI64 << bit_offset);
     }
 
-    CUDA uint64_t *get_array() const {
+    CUDA_CALL uint64_t *get_array() const {
         return array;
     }
 
@@ -71,7 +71,7 @@ private:
     uint64_t *array;
     bool wrapper;
 
-    CUDA BitField(uint64_t *array, uint64_t size) :
+    CUDA_CALL BitField(uint64_t *array, uint64_t size) :
             size(size), array(array), wrapper(true) {}
 };
 

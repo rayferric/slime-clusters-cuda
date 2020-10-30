@@ -26,7 +26,7 @@
 
 // Where to start and how far to explore:
 #define WORK_OFFSET 0
-#define WORK_SIZE 1 // (1UI64 << 16)
+#define WORK_SIZE (1UI64 << 10)
 
 // Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
@@ -34,21 +34,19 @@
 #define REPORT_DELAY 1000
 #define LOG_FILE "clusters.txt"
 
-#define EXTENTS 64
-#define MIN_CLUSTER_SIZE 6
+#define EXTENTS 256
+#define MIN_CLUSTER_SIZE 15
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
 
 const size_t CACHE_SIZE_BITS = (EXTENTS * 2UI64) * (EXTENTS * 2UI64);
 const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
 
-CUDA bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
-    // This addition right here causes integer overflow, which appearently gives different results on a GPU.
-    // Investigation is imminent.
-    world_seed += chunk_x * chunk_x * 0x4C1906;
-    world_seed += chunk_x * 0x5AC0DB;
+CUDA_CALL bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
+    world_seed += CUDA::wrapping_mul(CUDA::wrapping_mul(chunk_x, chunk_x), 0x4C1906);
+    world_seed += CUDA::wrapping_mul(chunk_x, 0x5AC0DB);
     world_seed += chunk_z * chunk_z * 0x4307A7UI64;
-    world_seed += chunk_z * 0x5F24F;
+    world_seed += CUDA::wrapping_mul(chunk_z, 0x5F24F);
     world_seed ^= 0x3AD8025FUI64;
 
     rand->set_seed(world_seed);
@@ -56,7 +54,7 @@ CUDA bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk
     return rand->next_int(10) == 0;
 }
 
-CUDA int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
+CUDA_CALL int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
     // Map two-dimensional position to a one-dimensional index:
     uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
 
@@ -104,18 +102,6 @@ __global__ void kernel(uint64_t work_item_count, uint64_t offset, uint64_t *cach
         }
     }
 
-    // DEBUG: Dump slime chunk pattern to cache:
-    for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
-        for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
-            uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
-
-            if(check_slime_chunk(rand, world_seed, chunk_x, chunk_z))
-                cache->set(cache_idx, true);
-            else
-                cache->set(cache_idx, false);
-        }
-    }
-
     delete rand;
     delete cache;
 }
@@ -135,7 +121,9 @@ void manage_device(int32_t device_index) {
     int32_t mp_count = prop.multiProcessorCount;
     int32_t mp_size = prop.maxThreadsPerMultiProcessor;
     int32_t thread_limit = mp_count * mp_size;
-    printf("COUNT: %d + SIZE: %d = LIMIT: %d\n", mp_count, mp_size, thread_limit);
+
+    // Effectively throttle device usage to 50 % (to keep the host working):
+    thread_limit /= 2;
 
     // Found items are collected in video memory.
     // Any collected items will be transferred to the host in-between work unit executions.
@@ -188,52 +176,6 @@ void manage_device(int32_t device_index) {
             }
         }
         delete cluster;
-
-        // DEBUG: Print expected cache output and the actual one:
-        {
-            BitField *cache = new BitField(CACHE_SIZE_BITS);
-
-            JavaRandom *rand = new JavaRandom();
-            for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
-                for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
-                    uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
-
-                    if(check_slime_chunk(rand, 0, chunk_x, chunk_z))
-                        cache->set(cache_idx, true);
-                    else
-                        cache->set(cache_idx, false);
-                }
-            }
-            delete rand;
-
-            for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
-                for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
-                    uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
-                    std::cout << cache->get(cache_idx);
-                    if(chunk_x == EXTENTS - 1)
-                        std::cout << std::endl;
-                }
-            }
-            delete cache;
-        }
-
-        std::cout << "\n\n\n";
-
-        {
-            BitField *cache = new BitField(CACHE_SIZE_BITS);
-            cudaMemcpy(cache->get_array(), d_caches, CACHE_SIZE_UINT64 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-            for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
-                for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
-                    uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
-                    std::cout << cache->get(cache_idx);
-                    if(chunk_x == EXTENTS - 1)
-                        std::cout << std::endl;
-                }
-            }
-            delete cache;
-        }
-
-        // END OF DEBUG CODE
 
         found_total += collector_size;
 
