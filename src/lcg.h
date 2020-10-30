@@ -7,11 +7,8 @@
 
 class LCG {
 public:
-    CUDA LCG(uint64_t multiplier, uint64_t addend, uint64_t modulus) {
-        this->multiplier = multiplier;
-        this->addend = addend;
-        this->modulus = modulus;
-
+    CUDA LCG(uint64_t multiplier, uint64_t addend, uint64_t modulus) :
+            multiplier(multiplier), addend(addend), modulus(modulus) {
         // True for when the modulus is a power of two:
         can_mask = (modulus & -modulus) == modulus;
     }

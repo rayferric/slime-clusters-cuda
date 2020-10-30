@@ -34,7 +34,7 @@
 #define REPORT_DELAY 1000
 #define LOG_FILE "clusters.txt"
 
-#define EXTENTS 128
+#define EXTENTS 64
 #define MIN_CLUSTER_SIZE 6
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
@@ -85,7 +85,7 @@ CUDA int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_see
 
 // Fails for higher distances from (0, 0). (only on GPU) What might be the case?
 __global__ void kernel(uint64_t work_item_count, uint64_t offset, uint64_t *caches, uint64_t *collector_size, Cluster *collector) {
-    uint64_t local_index = threadIdx.x + (uint64_t)blockIdx.x * blockDim.x;
+    uint64_t local_index = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if(local_index >= work_item_count)
         return;
 
@@ -101,6 +101,18 @@ __global__ void kernel(uint64_t work_item_count, uint64_t offset, uint64_t *cach
                 uint64_t collector_index = atomicAdd(collector_size, 1);
                 collector[collector_index] = Cluster(world_seed, chunk_x, chunk_z, size);
             }
+        }
+    }
+
+    // DEBUG: Dump slime chunk pattern to cache:
+    for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
+        for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
+            uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
+
+            if(check_slime_chunk(rand, world_seed, chunk_x, chunk_z))
+                cache->set(cache_idx, true);
+            else
+                cache->set(cache_idx, false);
         }
     }
 
@@ -159,6 +171,7 @@ void manage_device(int32_t device_index) {
         offset_mutex.unlock();
 
         cudaDeviceSynchronize();
+
         cudaError_t code;
         if((code = cudaGetLastError()) != cudaSuccess) {
             std::lock_guard<std::mutex> stderr_guard(stderr_mutex);
@@ -190,13 +203,14 @@ void manage_device(int32_t device_index) {
 
         // DEBUG: Print caches:
 
-        // caches = new uint64_t[thread_limit * CACHE_SIZE_UINT64];
-        // cudaMemcpy(caches, d_caches, 1 * CACHE_SIZE_UINT64 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        // for(int i = 0; i < CACHE_SIZE_UINT64; i++) {
-        //     std::cout << std::bitset<64>(caches[i]);
-        // }
-        // std::cout << std::endl;
-        // delete[] caches;
+        BitField *cache = new BitField(CACHE_SIZE_BITS);
+        cudaMemcpy(cache->get_array(), d_caches, CACHE_SIZE_UINT64 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+        for(int i = 0; i < CACHE_SIZE_BITS; i++) {
+            std::cout << cache->get(i);
+            if(i % 128 == 127)
+                std::cout << std::endl;
+        }
+        delete cache;
 
         //
 

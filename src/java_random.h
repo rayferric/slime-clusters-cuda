@@ -9,9 +9,9 @@
 
 class JavaRandom : public Random {
 public:
-    CUDA JavaRandom() : JavaRandom(0UI64) {};
+    CUDA JavaRandom() : JavaRandom(0UI64) {}
 
-    CUDA JavaRandom(uint64_t seed) : Random(LCG(0x5DEECE66DUI64, 0xB, 1UI64 << 48), seed) {};
+    CUDA JavaRandom(uint64_t seed) : Random(LCG(0x5DEECE66DUI64, 0xB, 1UI64 << 48), seed) {}
 
     CUDA static bool next_boolean(Random *random) {
         return next(random, 1) != 0;

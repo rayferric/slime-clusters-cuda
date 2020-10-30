@@ -12,18 +12,18 @@
 
 class BitField {
 public:
-    CUDA BitField(uint64_t size) {
+    // Constructs a zero bit field. Deleting this object also frees the internal array.
+    CUDA BitField(uint64_t size) : size(size), wrapper(false) {
         // Equivalent to: ceil(size / 64)
         size_t array_size = ((size + (UINT64_BITS - 1)) / UINT64_BITS);
-
-        this->size = size;
 
         array = new uint64_t[array_size];
         memset(array, 0, array_size * sizeof(uint64_t));
     }
 
     CUDA ~BitField() {
-        delete[] array;
+        if(!wrapper)
+            delete[] array;
     }
 
     std::string to_string() const {
@@ -36,6 +36,7 @@ public:
         return builder;
     }
 
+    // Constructs a wrapper bit field. Deleting this object does not free the wrapped array.
     CUDA static BitField *wrap(uint64_t *array, uint64_t size) {
         return new BitField(array, size);
     }
@@ -61,14 +62,17 @@ public:
             array[array_index] &= ~(1UI64 << bit_offset);
     }
 
+    CUDA uint64_t *get_array() const {
+        return array;
+    }
+
 private:
     uint64_t size;
     uint64_t *array;
+    bool wrapper;
 
-    CUDA BitField(uint64_t *array, uint64_t size) {
-        this->size = size;
-        this->array = array;
-    }
+    CUDA BitField(uint64_t *array, uint64_t size) :
+            size(size), array(array), wrapper(true) {}
 };
 
 #endif // BIT_FIELD_H
