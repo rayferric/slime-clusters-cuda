@@ -1,6 +1,6 @@
 # Slime Clusters CUDA
 
-CUDA_CALL C++ version of **[slime-clusters](https://github.com/rayferric/slime-clusters)**.
+CUDA C++ version of **[slime-clusters](https://github.com/rayferric/slime-clusters)**.
 
 **NON-DEPLOYABLE WIP**
 
