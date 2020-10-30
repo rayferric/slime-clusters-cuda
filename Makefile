@@ -5,12 +5,9 @@ default: build
 build:
 	IF NOT EXIST "bin" MD "bin"
 	$(VCVARS) && nvcc "src\main.cu" -o="bin\slime-clusters" -Wno-deprecated-gpu-targets --disable-warnings
-	DEL "bin\slime-clusters.exp"
-	DEL "bin\slime-clusters.lib"
 
 run: build
 	bin/slime-clusters
 
 clean:
 	IF EXIST "bin" RD /S /Q "bin"
-	IF EXIST "obj" RD /S /Q "obj"
