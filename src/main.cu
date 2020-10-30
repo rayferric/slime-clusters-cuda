@@ -43,6 +43,8 @@ const size_t CACHE_SIZE_BITS = (EXTENTS * 2UI64) * (EXTENTS * 2UI64);
 const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
 
 CUDA bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
+    // This addition right here causes integer overflow, which appearently gives different results on a GPU.
+    // Investigation is imminent.
     world_seed += chunk_x * chunk_x * 0x4C1906;
     world_seed += chunk_x * 0x5AC0DB;
     world_seed += chunk_z * chunk_z * 0x4307A7UI64;
@@ -52,7 +54,6 @@ CUDA bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk
     rand->set_seed(world_seed);
     rand->scramble();
     return rand->next_int(10) == 0;
-    // return ((uint64_t)((((world_seed ^ 0x5DEECE66DUI64) & ((1UI64 << 48) - 1)) * 0x5DEECE66DUI64 + 0xB) & ((1UI64 << 48) - 1)) >> 17) % 10 == 0;
 }
 
 CUDA int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
@@ -83,7 +84,6 @@ CUDA int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_see
     return count;
 }
 
-// Fails for higher distances from (0, 0). (only on GPU) What might be the case?
 __global__ void kernel(uint64_t work_item_count, uint64_t offset, uint64_t *caches, uint64_t *collector_size, Cluster *collector) {
     uint64_t local_index = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if(local_index >= work_item_count)
@@ -137,7 +137,7 @@ void manage_device(int32_t device_index) {
     int32_t thread_limit = mp_count * mp_size;
     printf("COUNT: %d + SIZE: %d = LIMIT: %d\n", mp_count, mp_size, thread_limit);
 
-    // Found items are collected in the video memory.
+    // Found items are collected in video memory.
     // Any collected items will be transferred to the host in-between work unit executions.
     uint64_t *d_caches;
     uint64_t *d_collector_size;
@@ -150,18 +150,6 @@ void manage_device(int32_t device_index) {
     while(offset < WORK_SIZE) {
         cudaMemset(d_caches, 0, thread_limit * CACHE_SIZE_UINT64 * sizeof(uint64_t));
         cudaMemset(d_collector_size, 0, sizeof(uint64_t));
-
-        // DEBUG: Print caches:
-
-        // uint64_t *caches = new uint64_t[thread_limit * CACHE_SIZE_UINT64];
-        // cudaMemcpy(caches, d_caches, 1 * CACHE_SIZE_UINT64 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        // for(int i = 0; i < CACHE_SIZE_UINT64; i++) {
-        //     std::cout << std::bitset<64>(caches[i]);
-        // }
-        // std::cout << std::endl;
-        // delete[] caches;
-
-        //
 
         uint64_t work_item_count = WORK_SIZE - offset;
         if(work_item_count > thread_limit)
@@ -201,18 +189,51 @@ void manage_device(int32_t device_index) {
         }
         delete cluster;
 
-        // DEBUG: Print caches:
+        // DEBUG: Print expected cache output and the actual one:
+        {
+            BitField *cache = new BitField(CACHE_SIZE_BITS);
 
-        BitField *cache = new BitField(CACHE_SIZE_BITS);
-        cudaMemcpy(cache->get_array(), d_caches, CACHE_SIZE_UINT64 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < CACHE_SIZE_BITS; i++) {
-            std::cout << cache->get(i);
-            if(i % 128 == 127)
-                std::cout << std::endl;
+            JavaRandom *rand = new JavaRandom();
+            for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
+                for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
+                    uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
+
+                    if(check_slime_chunk(rand, 0, chunk_x, chunk_z))
+                        cache->set(cache_idx, true);
+                    else
+                        cache->set(cache_idx, false);
+                }
+            }
+            delete rand;
+
+            for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
+                for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
+                    uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
+                    std::cout << cache->get(cache_idx);
+                    if(chunk_x == EXTENTS - 1)
+                        std::cout << std::endl;
+                }
+            }
+            delete cache;
         }
-        delete cache;
 
-        //
+        std::cout << "\n\n\n";
+
+        {
+            BitField *cache = new BitField(CACHE_SIZE_BITS);
+            cudaMemcpy(cache->get_array(), d_caches, CACHE_SIZE_UINT64 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+            for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
+                for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
+                    uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
+                    std::cout << cache->get(cache_idx);
+                    if(chunk_x == EXTENTS - 1)
+                        std::cout << std::endl;
+                }
+            }
+            delete cache;
+        }
+
+        // END OF DEBUG CODE
 
         found_total += collector_size;
 
