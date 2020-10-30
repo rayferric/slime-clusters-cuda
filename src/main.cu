@@ -11,6 +11,7 @@
 #include <iostream>
 #include <bitset>
 
+#include "cuda.h"
 #include "cluster.h"
 #include "lcg.h"
 #include "random.h"
@@ -27,11 +28,7 @@
 #define WORK_OFFSET 0
 #define WORK_SIZE 1 // (1UI64 << 16)
 
-// Size of the collector array, or how many items are expected to be found in a single work unit.
-// Per-device memory requirement:
-// 2^32 ->  32 GiB
-// 2^24 -> 128 MiB
-// 2^16 -> 512 kiB
+// Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
 
 #define REPORT_DELAY 1000
@@ -45,7 +42,7 @@
 const size_t CACHE_SIZE_BITS = (EXTENTS * 2UI64) * (EXTENTS * 2UI64);
 const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
 
-__device__ bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
+CUDA bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
 	world_seed += chunk_x * chunk_x * 0x4C1906;
 	world_seed += chunk_x * 0x5AC0DB;
 	world_seed += chunk_z * chunk_z * 0x4307A7UI64;
@@ -58,7 +55,7 @@ __device__ bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t
 	return ((uint64_t)((((world_seed ^ 0x5DEECE66DUI64) & ((1UI64 << 48) - 1)) * 0x5DEECE66DUI64 + 0xB) & ((1UI64 << 48) - 1)) >> 17) % 10 == 0;
 }
 
-__device__ int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
+CUDA int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
 	// Map two-dimensional position to a one-dimensional index:
 	uint64_t cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
 
@@ -86,6 +83,7 @@ __device__ int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t wor
 	return count;
 }
 
+// Fails for higher distances from (0, 0). (only on GPU) What might be the case?
 __global__ void kernel(uint64_t work_item_count, uint64_t offset, uint64_t *caches, uint64_t *collector_size, Cluster *collector) {
 	uint64_t local_index = threadIdx.x + (uint64_t)blockIdx.x * blockDim.x;
 	if(local_index >= work_item_count)
