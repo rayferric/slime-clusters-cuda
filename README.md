@@ -2,8 +2,6 @@
 
 CUDA C++ version of **[slime-clusters](https://github.com/rayferric/slime-clusters)**.
 
-**NON-DEPLOYABLE WIP**
-
 ## About
 
 ### Authors
