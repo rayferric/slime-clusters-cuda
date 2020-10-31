@@ -31,7 +31,7 @@
 // Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
 
-#define REPORT_DELAY 10000
+#define REPORT_DELAY 30000
 #define LOG_FILE "clusters.txt"
 
 #define EXTENTS 512
@@ -45,7 +45,7 @@ const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64
 CUDA_CALL bool check_slime_chunk(JavaRandom *rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
     world_seed += CUDA::wrapping_mul(CUDA::wrapping_mul(chunk_x, chunk_x), 0x4C1906);
     world_seed += CUDA::wrapping_mul(chunk_x, 0x5AC0DB);
-    world_seed += chunk_z * chunk_z * 0x4307A7UI64;
+    world_seed += CUDA::wrapping_mul(chunk_z, chunk_z) * 0x4307A7UI64;
     world_seed += CUDA::wrapping_mul(chunk_z, 0x5F24F);
     world_seed ^= 0x3AD8025FUI64;
 
@@ -82,9 +82,9 @@ CUDA_CALL int32_t find_clusters(JavaRandom *rand, BitField *cache, uint64_t worl
     return count;
 }
 
-__global__ void kernel(uint64_t num_threads, uint64_t offset, uint64_t *caches, uint64_t *collector_size, Cluster *collector) {
+__global__ void kernel(uint64_t wave_size, uint64_t offset, uint64_t *caches, uint64_t *collector_size, Cluster *collector) {
     uint64_t local_index = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if(local_index >= num_threads)
+    if(local_index >= wave_size)
         return;
 
     BitField *cache = BitField::wrap(caches + (local_index * CACHE_SIZE_UINT64), CACHE_SIZE_BITS);
@@ -141,12 +141,21 @@ void manage_device(int32_t device_index) {
     cudaThreadSetLimit(cudaLimitStackSize, 8192);
     info(device_index, "Updated stack size from " + std::to_string(old_stack_size) + " B to 8192 B.");
 
-    // This is the number of threads that has to be launched per wave for maximum performance:
+    // Approximate the number of threads that has to be launched per wave for maximum performance:
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device_index);
-    int32_t pref_threads = prop.maxThreadsPerMultiProcessor * prop.multiProcessorCount;
-    info(device_index, "Preferred number of threads: " + std::to_string(pref_threads));
+    int32_t pref_wave_size = prop.maxThreadsPerMultiProcessor * prop.multiProcessorCount;
 
+    // Memory capacity may limit pref_wave_size:
+    size_t mem_requirement = pref_wave_size * CACHE_SIZE_UINT64 * sizeof(uint64_t);
+    size_t mem_limit = prop.totalGlobalMem - (128UI64 * 1024 * 1024); // Always leave a 128 MiB margin.
+    if(mem_requirement > mem_limit)
+        pref_wave_size = mem_limit;
+    pref_wave_size = mem_requirement / (CACHE_SIZE_UINT64 * sizeof(uint64_t));
+
+    info(device_index, "Preferred number of threads per wave: " + std::to_string(pref_wave_size));
+
+    // Calculate optimal block size:
     int32_t block_size = prop.maxThreadsPerMultiProcessor / PREF_BLOCKS_PER_SM;
     if(block_size > prop.maxThreadsPerBlock)
         block_size = prop.maxThreadsPerBlock;
@@ -157,37 +166,41 @@ void manage_device(int32_t device_index) {
 
     info(device_index, "Threads per block: " + std::to_string(block_size));
 
-
     // Found items are collected in video memory.
     // Any collected items will be transferred to the host in-between work unit executions.
-    uint64_t *d_caches;
-    uint64_t *d_collector_size;
+    uint64_t *d_caches, *d_collector_size;
     Cluster *d_collector;
-    cudaMalloc(&d_caches, pref_threads * CACHE_SIZE_UINT64 * sizeof(uint64_t));
+    cudaMalloc(&d_caches, pref_wave_size * CACHE_SIZE_UINT64 * sizeof(uint64_t));
     cudaMalloc(&d_collector_size, sizeof(uint64_t));
     cudaMalloc(&d_collector, MAX_COLLECTOR_SIZE * sizeof(Cluster));
     
+    // Offset is also accessed from within the while condition.
     offset_mutex.lock();
     while(offset < WORK_SIZE) {
-        cudaMemset(d_caches, 0, pref_threads * CACHE_SIZE_UINT64 * sizeof(uint64_t));
+        // Reset caches:
+        cudaMemset(d_caches, 0, pref_wave_size * CACHE_SIZE_UINT64 * sizeof(uint64_t));
         cudaMemset(d_collector_size, 0, sizeof(uint64_t));
 
-        uint64_t num_threads = WORK_SIZE - offset;
-        if(num_threads > pref_threads)
-            num_threads = pref_threads;
-        kernel<<<(num_threads + (block_size - 1)) / block_size, block_size>>>(num_threads, offset, d_caches, d_collector_size, d_collector);
-        offset += num_threads;
+        // Launch one wave:
+        uint64_t wave_size = WORK_SIZE - offset;
+        if(wave_size > pref_wave_size)
+            wave_size = pref_wave_size;
+        kernel<<<(wave_size + (block_size - 1)) / block_size, block_size>>>(wave_size, offset, d_caches, d_collector_size, d_collector);
+        offset += wave_size;
         offset_mutex.unlock();
 
+        // Synchronize:
         cudaDeviceSynchronize();
 
+        // Catch errors:
         cudaError_t code;
         if((code = cudaGetLastError()) != cudaSuccess) {
             error(device_index, cudaGetErrorString(code));
-            devices_running--;
-            return;
+            offset_mutex.lock();
+            break;
         }
 
+        // Dump the collector:
         uint64_t collector_size;
         cudaMemcpy(&collector_size, d_collector_size, sizeof(uint64_t), cudaMemcpyDeviceToHost);
         
@@ -221,36 +234,37 @@ uint64_t get_millis() {
 int32_t main(int32_t argc, char **argv) {
     log_file = fopen(LOG_FILE, "w");
 
+    // Launch host threads:
     std::vector<std::thread> threads(DEVICE_COUNT);
     for(int32_t i = 0; i < DEVICE_COUNT; i++)
         threads[i] = std::thread(manage_device, i);
 
+    // Monitor progress:
     uint64_t start_time = get_millis();
-    uint64_t offset_snapshot;
     while(true) {
         std::this_thread::sleep_for(std::chrono::milliseconds(REPORT_DELAY));
 
         if(devices_running.load() == 0)
             break;
 
+        uint64_t elapsed = get_millis() - start_time;
+        double progress, speed, eta;
         {
             std::lock_guard<std::mutex> offset_guard(offset_mutex);
-            offset_snapshot = offset;
+            
+            progress = ((double)offset / WORK_SIZE) * 100;
+            speed = offset / (elapsed * 0.001);
+            eta = (WORK_SIZE - offset) / speed;
         }
-
-        uint64_t elapsed = get_millis() - start_time;
-
-        double progress = ((double)offset_snapshot / WORK_SIZE) * 100.0;
-        double speed = offset_snapshot / (elapsed * 0.001);
-        double eta = (WORK_SIZE - offset_snapshot) / speed;
 
         {
             std::lock_guard<std::mutex> stdout_guard(stdout_mutex);
-            printf("%f %% - %llu found - %llu seeds/s - %llu s elapsed - ETA %llu s\n", progress, found_total.load(), (uint64_t)speed, (uint64_t)(elapsed * 0.001), (uint64_t)eta);
+            printf("%f %% - %llu found - %llu seeds/s - %llu s elapsed - ETA %llu s\n", progress, found_total.load(), (uint64_t)speed, elapsed / 1000, (uint64_t)eta);
             fflush(stdout);
         }
     }
 
+    // Join host threads:
     for(std::thread &thread : threads)
         thread.join();
 
