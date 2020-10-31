@@ -35,7 +35,7 @@
 #define LOG_FILE "clusters.txt"
 
 #define EXTENTS 512
-#define MIN_CLUSTER_SIZE 20
+#define MIN_CLUSTER_SIZE 23
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
 
