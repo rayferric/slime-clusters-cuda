@@ -33,7 +33,7 @@
 // Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
 
-#define REPORT_DELAY 1000
+#define REPORT_DELAY 10000
 #define LOG_FILE "clusters.txt"
 
 #define EXTENTS 512
@@ -70,9 +70,7 @@ CUDA_CALL bool check_slime_chunk(JavaRandom &rand, uint64_t world_seed, int32_t 
     return rand.next_int(10) == 0;
 }
 
-CUDA_CALL Cluster explore_cluster(uint64_t world_seed, int32_t origin_x, int32_t origin_z, Offset *stack_buffer, uint64_t *cache_buffer) {
-    JavaRandom rand = JavaRandom();
-
+CUDA_CALL Cluster explore_cluster(JavaRandom &rand, uint64_t world_seed, int32_t origin_x, int32_t origin_z, Offset *stack_buffer, uint64_t *cache_buffer) {
     memset(cache_buffer, 0, CACHE_SIZE_UINT64 * sizeof(uint64_t));
     BitField cache = BitField::wrap(cache_buffer, CACHE_SIZE_BITS);
 
@@ -108,13 +106,14 @@ CUDA_CALL Cluster explore_cluster(uint64_t world_seed, int32_t origin_x, int32_t
 
         cluster_size++;
 
-        if(offset.x + 1 < CACHE_EXTENTS && chunk_x + 1 < EXTENTS)
+        // We assume the new position is within cache bounds:
+        if(chunk_x + 1 < EXTENTS)
             stack.push(Offset(offset.x + 1, offset.z));
-        if(offset.x - 1 >= -CACHE_EXTENTS && chunk_x - 1 >= -EXTENTS)
+        if(chunk_x - 1 >= -EXTENTS)
             stack.push(Offset(offset.x - 1, offset.z));
-        if(offset.z + 1 < CACHE_EXTENTS && chunk_z + 1 < EXTENTS)
+        if(chunk_z + 1 < EXTENTS)
             stack.push(Offset(offset.x, offset.z + 1));
-        if(offset.z - 1 >= -CACHE_EXTENTS && chunk_z - 1 >= -EXTENTS)
+        if(chunk_z - 1 >= -EXTENTS)
             stack.push(Offset(offset.x, offset.z - 1));
     }
 
@@ -128,12 +127,15 @@ __global__ void kernel(uint64_t wave_size, uint64_t offset, uint64_t *collector_
 
     uint64_t world_seed = local_index + offset + WORK_OFFSET;
 
+    JavaRandom rand = JavaRandom();
+
+    // This should reside in registers?
     Offset stack_buffer[STACK_SIZE];
     uint64_t cache_buffer[CACHE_SIZE_UINT64];
 
     for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
         for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
-            Cluster cluster = explore_cluster(world_seed, chunk_x, chunk_z, stack_buffer, cache_buffer);
+            Cluster cluster = explore_cluster(rand, world_seed, chunk_x, chunk_z, stack_buffer, cache_buffer);
             if(cluster.get_size() >= MIN_CLUSTER_SIZE) {
                 uint64_t collector_index = atomicAdd(collector_size, 1);
                 collector[collector_index] = cluster;
@@ -212,6 +214,7 @@ void manage_device(int32_t device_index) {
 
         // Synchronize:
         cudaDeviceSynchronize();
+        info(device_index, "Synchronized.");
 
         // Catch errors:
         cudaError_t code;
