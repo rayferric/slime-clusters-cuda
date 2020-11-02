@@ -144,8 +144,9 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
         int32_t chunk_x = chunk_idx / (EXTENTS * 2) - EXTENTS;
         int32_t chunk_z = chunk_idx % (EXTENTS * 2) - EXTENTS;
 
-        Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
         cache.clear();
+        // Stack is left empty after very call to explore_cluster(...), so there's no need to clear it here.
+        Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
         if(cluster.get_size() >= MIN_CLUSTER_SIZE) {
             uint64_t collector_idx = atomicAdd(collector_size, 1);
             collector[collector_idx] = cluster;
