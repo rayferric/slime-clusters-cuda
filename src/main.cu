@@ -22,9 +22,8 @@
 // How many compute devices to use:
 #define DEVICE_COUNT 1
 
-// This can be tuned. (Doesn't influence device occupancy.)
-// Or should we use cudaDeviceProp::maxBlocksPerMultiProcessor instead?
-#define PREF_BLOCKS_PER_SM 8 
+// This can be tuned, should be a multiple of warp size. (Doesn't influence device occupancy.)
+#define BLOCK_SIZE 512
 
 // Where to start and how far to explore:
 #define WORK_OFFSET 0
@@ -36,16 +35,18 @@
 #define REPORT_DELAY 10000
 #define LOG_FILE "clusters.txt"
 
-#define EXTENTS 512
-#define MIN_CLUSTER_SIZE 20
+#define EXTENTS 256
+#define MIN_CLUSTER_SIZE 15
 
 #define STACK_SIZE 128
-#define CACHE_EXTENTS 64
+#define TEMP_CACHE_EXTENTS 64
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
 
-const size_t CACHE_SIZE_BITS = (CACHE_EXTENTS * 2UI64) * (CACHE_EXTENTS * 2UI64);
-const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
+const size_t BLOCK_CACHE_SIZE_BITS = (EXTENTS * 2UI64) * (EXTENTS * 2UI64);
+const size_t BLOCK_CACHE_SIZE_UINT64 = ((BLOCK_CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
+const size_t TEMP_CACHE_SIZE_BITS = (TEMP_CACHE_EXTENTS * 2UI64) * (TEMP_CACHE_EXTENTS * 2UI64);
+const size_t TEMP_CACHE_SIZE_UINT64 = ((TEMP_CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
 
 // Device code:
 
@@ -53,12 +54,12 @@ class Offset {
 public:
     int8_t x, z;
 
-    CUDA_CALL Offset() : Offset(0, 0) {}
+    HYBRID_CALL Offset() : Offset(0, 0) {}
 
-    CUDA_CALL Offset(int8_t x, int8_t z) : x(x), z(z) {}
+    HYBRID_CALL Offset(int8_t x, int8_t z) : x(x), z(z) {}
 };
 
-CUDA_CALL bool check_slime_chunk(JavaRandom &rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
+HYBRID_CALL bool check_slime_chunk(JavaRandom &rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
     world_seed += CUDA::wrapping_mul(CUDA::wrapping_mul(chunk_x, chunk_x), 0x4C1906);
     world_seed += CUDA::wrapping_mul(chunk_x, 0x5AC0DB);
     world_seed += CUDA::wrapping_mul(chunk_z, chunk_z) * 0x4307A7UI64;
@@ -70,11 +71,8 @@ CUDA_CALL bool check_slime_chunk(JavaRandom &rand, uint64_t world_seed, int32_t 
     return rand.next_int(10) == 0;
 }
 
-CUDA_CALL Cluster explore_cluster(JavaRandom &rand, uint64_t world_seed, int32_t origin_x, int32_t origin_z, Offset *stack_buffer, uint64_t *cache_buffer) {
-    memset(cache_buffer, 0, CACHE_SIZE_UINT64 * sizeof(uint64_t));
-    BitField cache = BitField::wrap(cache_buffer, CACHE_SIZE_BITS);
-
-    Stack<Offset> stack = Stack<Offset>::wrap(stack_buffer, STACK_SIZE);
+DEVICE_CALL Cluster explore_cluster(BitField &block_cache, BitField &temp_cache, Stack<Offset> &stack, JavaRandom &rand, uint64_t world_seed, int32_t origin_x, int32_t origin_z) {
+    stack.clear();
     stack.push(Offset(0, 0));
 
     int32_t cluster_size = 0;
@@ -85,12 +83,13 @@ CUDA_CALL Cluster explore_cluster(JavaRandom &rand, uint64_t world_seed, int32_t
         int32_t chunk_x = origin_x + offset.x;
         int32_t chunk_z = origin_z + offset.z;
 
-        uint64_t cache_idx = (offset.x + CACHE_EXTENTS) * (CACHE_EXTENTS * 2UI64) + (offset.z + CACHE_EXTENTS);
-
-        if(cache.get(cache_idx))
+        uint64_t temp_cache_idx = (offset.x + TEMP_CACHE_EXTENTS) * (TEMP_CACHE_EXTENTS * 2UI64) + (offset.z + TEMP_CACHE_EXTENTS);
+        if(temp_cache.get(temp_cache_idx))
             continue;
+        temp_cache.set(temp_cache_idx, true);
 
-        cache.set(cache_idx, true);
+        uint64_t block_cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
+        block_cache.set(block_cache_idx, true);
 
         if(!check_slime_chunk(rand, world_seed, chunk_x, chunk_z))
             continue;
@@ -120,26 +119,45 @@ CUDA_CALL Cluster explore_cluster(JavaRandom &rand, uint64_t world_seed, int32_t
     return Cluster(world_seed, cluster_size, min_x, min_z, max_x, max_z);
 }
 
-__global__ void kernel(uint64_t wave_size, uint64_t offset, uint64_t *collector_size, Cluster *collector) {
-    uint64_t local_index = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if(local_index >= wave_size)
-        return;
+__global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector) {
+    uint64_t world_seed = blockIdx.x + offset + WORK_OFFSET;
 
-    uint64_t world_seed = local_index + offset + WORK_OFFSET;
+    uint64_t min_chunks_per_thread = BLOCK_CACHE_SIZE_BITS / blockDim.x; // Preferred number of chunks to be processed by a thread.
+    uint64_t starting_chunk = threadIdx.x * min_chunks_per_thread;
+    uint64_t chunks_here; // Number of chunks processed by this thread.
+    if(threadIdx.x == blockDim.x - 1) // The last thread will process any extra chunks.
+        chunks_here = BLOCK_CACHE_SIZE_BITS - (blockDim.x - 1) * min_chunks_per_thread;
+    else
+        chunks_here = min_chunks_per_thread;
 
+    __shared__ uint64_t block_cache_buffer[BLOCK_CACHE_SIZE_UINT64];
+
+    // Init cache to zero and sync before starting:
+    memset(block_cache_buffer, 0, BLOCK_CACHE_SIZE_UINT64 * sizeof(uint64_t));
+    __syncthreads();
+
+    BitField block_cache = BitField::wrap(block_cache_buffer, BLOCK_CACHE_SIZE_BITS); // Other threads use their own wrappers for the same shared buffer.
+    BitField local_cache(TEMP_CACHE_SIZE_BITS);
+    Stack<Offset> stack(STACK_SIZE);
     JavaRandom rand = JavaRandom();
 
-    // This should reside in registers?
-    Offset stack_buffer[STACK_SIZE];
-    uint64_t cache_buffer[CACHE_SIZE_UINT64];
+    // We iterate in a specific manner to slightly improve caching performance:
+    bool reverse = (threadIdx.x % 2 == 0);
+    for(uint64_t i = 0; i < chunks_here; i++) {
+        uint64_t idx = (reverse ? ((chunks_here - 1) - i) : i);
+        uint64_t chunk_idx = idx + starting_chunk;
+        int32_t chunk_x = chunk_idx / (EXTENTS * 2) - EXTENTS;
+        int32_t chunk_z = chunk_idx % (EXTENTS * 2) - EXTENTS;
 
-    for(int32_t chunk_x = -EXTENTS; chunk_x < EXTENTS; chunk_x++) {
-        for(int32_t chunk_z = -EXTENTS; chunk_z < EXTENTS; chunk_z++) {
-            Cluster cluster = explore_cluster(rand, world_seed, chunk_x, chunk_z, stack_buffer, cache_buffer);
-            if(cluster.get_size() >= MIN_CLUSTER_SIZE) {
-                uint64_t collector_index = atomicAdd(collector_size, 1);
-                collector[collector_index] = cluster;
-            }
+        uint64_t block_cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
+        if(block_cache.get(block_cache_idx))
+            continue;
+
+        Cluster cluster = explore_cluster(block_cache, local_cache, stack, rand, world_seed, chunk_x, chunk_z);
+        local_cache.clear();
+        if(cluster.get_size() >= MIN_CLUSTER_SIZE) {
+            uint64_t collector_idx = atomicAdd(collector_size, 1);
+            collector[collector_idx] = cluster;
         }
     }
 }
@@ -177,19 +195,9 @@ void manage_device(int32_t device_index) {
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device_index);
     int32_t pref_wave_size = prop.maxThreadsPerMultiProcessor * prop.multiProcessorCount;
+    int32_t max_block_count = pref_wave_size / BLOCK_SIZE;
 
-    info(device_index, "Preferred number of threads per wave: " + std::to_string(pref_wave_size));
-
-    // Calculate optimal block size:
-    int32_t block_size = prop.maxThreadsPerMultiProcessor / PREF_BLOCKS_PER_SM;
-    if(block_size > prop.maxThreadsPerBlock)
-        block_size = prop.maxThreadsPerBlock;
-
-    // Round to the smaller multiple of warp size:
-    block_size /= prop.warpSize;
-    block_size *= prop.warpSize;
-
-    info(device_index, "Threads per block: " + std::to_string(block_size));
+    info(device_index, "Blocks per wave: " + std::to_string(max_block_count));
 
     // Found items are collected in video memory.
     // Any collected items will be transferred to the host in-between work unit executions.
@@ -204,12 +212,12 @@ void manage_device(int32_t device_index) {
         // Reset caches:
         cudaMemset(d_collector_size, 0, sizeof(uint64_t));
 
-        // Launch one wave:
-        uint64_t wave_size = WORK_SIZE - offset;
-        if(wave_size > pref_wave_size)
-            wave_size = pref_wave_size;
-        kernel<<<(wave_size + (block_size - 1)) / block_size, block_size>>>(wave_size, offset, d_collector_size, d_collector);
-        offset += wave_size;
+        // Launch one wave (one block does one seed):
+        uint64_t block_count = WORK_SIZE - offset;
+        if(block_count > max_block_count)
+            block_count = max_block_count;
+        kernel<<<block_count, BLOCK_SIZE>>>(block_count, offset, d_collector_size, d_collector);
+        offset += block_count;
         offset_mutex.unlock();
 
         // Synchronize:
@@ -233,15 +241,15 @@ void manage_device(int32_t device_index) {
 
         auto end = clusters.end();
         for(auto cluster = clusters.begin(); cluster != end; cluster++) {
-            // Remove all duplicates of this cluster:
+            // Remove all other duplicates of this cluster:
             end = std::remove(cluster + 1, end, *cluster);
 
             std::string cluster_info = cluster->to_string();
             log(cluster_info);
             info(device_index, cluster_info);
-        }
 
-        found_total += collector_size;
+            found_total++;
+        }
 
         offset_mutex.lock();
     }

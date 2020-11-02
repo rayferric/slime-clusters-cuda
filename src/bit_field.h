@@ -13,7 +13,7 @@
 class BitField {
 public:
     // Constructs a zero bit field. Deleting this object also frees the internal buffer.
-    CUDA_CALL BitField(uint64_t size) : size(size), wrapper(false) {
+    HYBRID_CALL BitField(uint64_t size) : size(size), wrapper(false) {
         // Equivalent to: ceil(size / 64)
         size_t buffer_size = ((size + (UINT64_BITS - 1)) / UINT64_BITS);
 
@@ -21,7 +21,7 @@ public:
         memset(buffer, 0, buffer_size * sizeof(uint64_t));
     }
 
-    CUDA_CALL ~BitField() {
+    HYBRID_CALL ~BitField() {
         if(!wrapper)
             delete[] buffer;
     }
@@ -37,11 +37,11 @@ public:
     }
 
     // Constructs a wrapper bit field. Deleting this object does not free the wrapped buffer.
-    CUDA_CALL static BitField wrap(uint64_t *buffer, uint64_t size) {
+    HYBRID_CALL static BitField wrap(uint64_t *buffer, uint64_t size) {
         return BitField(buffer, size);
     }
 
-    CUDA_CALL bool get(uint64_t index) const {
+    HYBRID_CALL bool get(uint64_t index) const {
         assert(index < size && "Index is out of bounds.");
 
         size_t buffer_index = index / UINT64_BITS;
@@ -50,7 +50,7 @@ public:
         return ((buffer[buffer_index] >> bit_offset) & 1) == 1;
     }
 
-    CUDA_CALL void set(uint64_t index, bool state) {
+    HYBRID_CALL void set(uint64_t index, bool state) {
         assert(index < size && "Index is out of bounds.");
 
         size_t buffer_index = index / UINT64_BITS;
@@ -62,7 +62,11 @@ public:
             buffer[buffer_index] &= ~(1UI64 << bit_offset);
     }
 
-    CUDA_CALL uint64_t *get_buffer() const {
+    HYBRID_CALL void clear() {
+        memset(buffer, 0, (size + 7) / 8);
+    }
+
+    HYBRID_CALL uint64_t *get_buffer() const {
         return buffer;
     }
 
@@ -71,7 +75,7 @@ private:
     uint64_t *buffer;
     bool wrapper;
 
-    CUDA_CALL BitField(uint64_t *buffer, uint64_t size) :
+    HYBRID_CALL BitField(uint64_t *buffer, uint64_t size) :
             size(size), buffer(buffer), wrapper(true) {}
 };
 
