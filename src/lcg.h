@@ -7,13 +7,13 @@
 
 class LCG {
 public:
-    CUDA_CALL LCG(uint64_t multiplier, uint64_t addend, uint64_t modulus) :
+    HYBRID_CALL LCG(uint64_t multiplier, uint64_t addend, uint64_t modulus) :
             multiplier(multiplier), addend(addend), modulus(modulus) {
         // True for when the modulus is a power of two:
         can_mask = (modulus & -modulus) == modulus;
     }
 
-    CUDA_CALL LCG of_step(int32_t step) const {
+    HYBRID_CALL LCG of_step(int32_t step) const {
         if(step == 0) return LCG(1, 0, modulus);
         if(step == 1) return *this;
 
@@ -37,30 +37,30 @@ public:
         return LCG(multiplier, addend, modulus);
     }
 
-    CUDA_CALL uint64_t mod(uint64_t seed) const {
+    HYBRID_CALL uint64_t mod(uint64_t seed) const {
         if(can_mask)
             return seed & (modulus - 1);
         else
             return seed % modulus;
     }
 
-    CUDA_CALL uint64_t scramble(uint64_t seed) const {
+    HYBRID_CALL uint64_t scramble(uint64_t seed) const {
         return mod(seed ^ multiplier);
     }
 
-    CUDA_CALL uint64_t next(uint64_t seed) const {
+    HYBRID_CALL uint64_t next(uint64_t seed) const {
         return mod(seed * multiplier + addend);
     }
 
-    CUDA_CALL uint64_t get_multiplier() const {
+    HYBRID_CALL uint64_t get_multiplier() const {
         return multiplier;
     }
 
-    CUDA_CALL uint64_t get_addend() const {
+    HYBRID_CALL uint64_t get_addend() const {
         return addend;
     }
 
-    CUDA_CALL uint64_t get_modulus() const {
+    HYBRID_CALL uint64_t get_modulus() const {
         return modulus;
     }
 

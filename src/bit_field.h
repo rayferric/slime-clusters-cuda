@@ -12,18 +12,18 @@
 
 class BitField {
 public:
-    // Constructs a zero bit field. Deleting this object also frees the internal array.
-    CUDA_CALL BitField(uint64_t size) : size(size), wrapper(false) {
+    // Constructs a zero bit field. Deleting this object also frees the internal buffer.
+    HYBRID_CALL BitField(uint64_t size) : size(size), wrapper(false) {
         // Equivalent to: ceil(size / 64)
-        size_t array_size = ((size + (UINT64_BITS - 1)) / UINT64_BITS);
+        size_t buffer_size = ((size + (UINT64_BITS - 1)) / UINT64_BITS);
 
-        array = new uint64_t[array_size];
-        memset(array, 0, array_size * sizeof(uint64_t));
+        buffer = new uint64_t[buffer_size];
+        memset(buffer, 0, buffer_size * sizeof(uint64_t));
     }
 
-    CUDA_CALL ~BitField() {
+    HYBRID_CALL ~BitField() {
         if(!wrapper)
-            delete[] array;
+            delete[] buffer;
     }
 
     std::string to_string() const {
@@ -36,43 +36,47 @@ public:
         return builder;
     }
 
-    // Constructs a wrapper bit field. Deleting this object does not free the wrapped array.
-    CUDA_CALL static BitField *wrap(uint64_t *array, uint64_t size) {
-        return new BitField(array, size);
+    // Constructs a wrapper bit field. Deleting this object does not free the wrapped buffer.
+    HYBRID_CALL static BitField wrap(uint64_t *buffer, uint64_t size) {
+        return BitField(buffer, size);
     }
 
-    CUDA_CALL bool get(uint64_t index) const {
+    HYBRID_CALL bool get(uint64_t index) const {
         assert(index < size && "Index is out of bounds.");
 
-        size_t array_index = index / UINT64_BITS;
+        size_t buffer_index = index / UINT64_BITS;
         int32_t bit_offset = (int32_t)(index % UINT64_BITS);
 
-        return ((array[array_index] >> bit_offset) & 1) == 1;
+        return ((buffer[buffer_index] >> bit_offset) & 1) == 1;
     }
 
-    CUDA_CALL void set(uint64_t index, bool state) {
+    HYBRID_CALL void set(uint64_t index, bool state) {
         assert(index < size && "Index is out of bounds.");
 
-        size_t array_index = index / UINT64_BITS;
+        size_t buffer_index = index / UINT64_BITS;
         int32_t bit_offset = (int32_t)(index % UINT64_BITS);
 
         if(state)
-            array[array_index] |= 1UI64 << bit_offset;
+            buffer[buffer_index] |= 1UI64 << bit_offset;
         else
-            array[array_index] &= ~(1UI64 << bit_offset);
+            buffer[buffer_index] &= ~(1UI64 << bit_offset);
     }
 
-    CUDA_CALL uint64_t *get_array() const {
-        return array;
+    HYBRID_CALL void clear() {
+        memset(buffer, 0, (size + 7) / 8);
+    }
+
+    HYBRID_CALL uint64_t *get_buffer() const {
+        return buffer;
     }
 
 private:
     uint64_t size;
-    uint64_t *array;
+    uint64_t *buffer;
     bool wrapper;
 
-    CUDA_CALL BitField(uint64_t *array, uint64_t size) :
-            size(size), array(array), wrapper(true) {}
+    HYBRID_CALL BitField(uint64_t *buffer, uint64_t size) :
+            size(size), buffer(buffer), wrapper(true) {}
 };
 
 #endif // BIT_FIELD_H
