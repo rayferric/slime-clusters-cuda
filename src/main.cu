@@ -35,18 +35,23 @@
 #define REPORT_DELAY 10000
 #define LOG_FILE "clusters.txt"
 
-#define EXTENTS 256
-#define MIN_CLUSTER_SIZE 15
+#define EXTENTS 512
+#define MIN_CLUSTER_SIZE 20
 
 #define STACK_SIZE 128
-#define TEMP_CACHE_EXTENTS 64
+
+// 32x32 cache around the examined chunk.
+// Algorithm ignores everything outside this region.
+// Duplicate entries may appear when the clipping occurs.
+// (Happens only to clusters whose AABB is larger than 16x16.)
+// Set this to the smallest value possible:
+#define CACHE_EXTENTS 16
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
 
-const size_t BLOCK_CACHE_SIZE_BITS = (EXTENTS * 2UI64) * (EXTENTS * 2UI64);
-const size_t BLOCK_CACHE_SIZE_UINT64 = ((BLOCK_CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
-const size_t TEMP_CACHE_SIZE_BITS = (TEMP_CACHE_EXTENTS * 2UI64) * (TEMP_CACHE_EXTENTS * 2UI64);
-const size_t TEMP_CACHE_SIZE_UINT64 = ((TEMP_CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
+const size_t CHUNKS_PER_SEED = (EXTENTS * 2UI64) * (EXTENTS * 2UI64);
+const size_t CACHE_SIZE_BITS = (CACHE_EXTENTS * 2UI64) * (CACHE_EXTENTS * 2UI64);
+const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
 
 // Device code:
 
@@ -71,7 +76,7 @@ HYBRID_CALL bool check_slime_chunk(JavaRandom &rand, uint64_t world_seed, int32_
     return rand.next_int(10) == 0;
 }
 
-DEVICE_CALL Cluster explore_cluster(BitField &block_cache, BitField &temp_cache, Stack<Offset> &stack, JavaRandom &rand, uint64_t world_seed, int32_t origin_x, int32_t origin_z) {
+DEVICE_CALL Cluster explore_cluster(BitField &cache, Stack<Offset> &stack, JavaRandom &rand, uint64_t world_seed, int32_t origin_x, int32_t origin_z) {
     stack.clear();
     stack.push(Offset(0, 0));
 
@@ -83,13 +88,10 @@ DEVICE_CALL Cluster explore_cluster(BitField &block_cache, BitField &temp_cache,
         int32_t chunk_x = origin_x + offset.x;
         int32_t chunk_z = origin_z + offset.z;
 
-        uint64_t temp_cache_idx = (offset.x + TEMP_CACHE_EXTENTS) * (TEMP_CACHE_EXTENTS * 2UI64) + (offset.z + TEMP_CACHE_EXTENTS);
-        if(temp_cache.get(temp_cache_idx))
+        uint64_t cache_idx = (offset.x + CACHE_EXTENTS) * (CACHE_EXTENTS * 2UI64) + (offset.z + CACHE_EXTENTS);
+        if(cache.get(cache_idx))
             continue;
-        temp_cache.set(temp_cache_idx, true);
-
-        uint64_t block_cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
-        block_cache.set(block_cache_idx, true);
+            cache.set(cache_idx, true);
 
         if(!check_slime_chunk(rand, world_seed, chunk_x, chunk_z))
             continue;
@@ -105,14 +107,13 @@ DEVICE_CALL Cluster explore_cluster(BitField &block_cache, BitField &temp_cache,
 
         cluster_size++;
 
-        // We assume the new position is within cache bounds:
-        if(chunk_x + 1 < EXTENTS)
+        if(chunk_x + 1 < EXTENTS && offset.x + 1 < CACHE_EXTENTS)
             stack.push(Offset(offset.x + 1, offset.z));
-        if(chunk_x - 1 >= -EXTENTS)
+        if(chunk_x - 1 >= -EXTENTS && offset.x - 1 >= -CACHE_EXTENTS)
             stack.push(Offset(offset.x - 1, offset.z));
-        if(chunk_z + 1 < EXTENTS)
+        if(chunk_z + 1 < EXTENTS && offset.z + 1 < CACHE_EXTENTS)
             stack.push(Offset(offset.x, offset.z + 1));
-        if(chunk_z - 1 >= -EXTENTS)
+        if(chunk_z - 1 >= -EXTENTS && offset.z - 1 >= -CACHE_EXTENTS)
             stack.push(Offset(offset.x, offset.z - 1));
     }
 
@@ -122,39 +123,29 @@ DEVICE_CALL Cluster explore_cluster(BitField &block_cache, BitField &temp_cache,
 __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector) {
     uint64_t world_seed = blockIdx.x + offset + WORK_OFFSET;
 
-    uint64_t min_chunks_per_thread = BLOCK_CACHE_SIZE_BITS / blockDim.x; // Preferred number of chunks to be processed by a thread.
+    uint64_t min_chunks_per_thread = CHUNKS_PER_SEED / blockDim.x; // Preferred number of chunks to be processed by a thread.
     uint64_t starting_chunk = threadIdx.x * min_chunks_per_thread;
     uint64_t chunks_here; // Number of chunks processed by this thread.
-    if(threadIdx.x == blockDim.x - 1) // The last thread will process any extra chunks.
-        chunks_here = BLOCK_CACHE_SIZE_BITS - (blockDim.x - 1) * min_chunks_per_thread;
+    if(threadIdx.x == blockDim.x - 1) // The last thread will process any extra chunks (shouldn't happen with a good BLOCK_SIZE).
+        chunks_here = CHUNKS_PER_SEED - (blockDim.x - 1) * min_chunks_per_thread;
     else
         chunks_here = min_chunks_per_thread;
 
-    __shared__ uint64_t block_cache_buffer[BLOCK_CACHE_SIZE_UINT64];
-
-    // Init cache to zero and sync before starting:
-    memset(block_cache_buffer, 0, BLOCK_CACHE_SIZE_UINT64 * sizeof(uint64_t));
-    __syncthreads();
-
-    BitField block_cache = BitField::wrap(block_cache_buffer, BLOCK_CACHE_SIZE_BITS); // Other threads use their own wrappers for the same shared buffer.
-    BitField local_cache(TEMP_CACHE_SIZE_BITS);
-    Stack<Offset> stack(STACK_SIZE);
+    // Static allocation is the key to performance:
+    uint64_t cache_buffer[CACHE_SIZE_UINT64];
+    Offset stack_buffer[STACK_SIZE];
+    BitField cache = BitField::wrap(cache_buffer, CACHE_SIZE_BITS);
+    Stack<Offset> stack = Stack<Offset>::wrap(stack_buffer, STACK_SIZE);
     JavaRandom rand = JavaRandom();
 
     // We iterate in a specific manner to slightly improve caching performance:
-    bool reverse = (threadIdx.x % 2 == 0);
     for(uint64_t i = 0; i < chunks_here; i++) {
-        uint64_t idx = (reverse ? ((chunks_here - 1) - i) : i);
-        uint64_t chunk_idx = idx + starting_chunk;
+        uint64_t chunk_idx = i + starting_chunk;
         int32_t chunk_x = chunk_idx / (EXTENTS * 2) - EXTENTS;
         int32_t chunk_z = chunk_idx % (EXTENTS * 2) - EXTENTS;
 
-        uint64_t block_cache_idx = (chunk_x + EXTENTS) * (EXTENTS * 2UI64) + (chunk_z + EXTENTS);
-        if(block_cache.get(block_cache_idx))
-            continue;
-
-        Cluster cluster = explore_cluster(block_cache, local_cache, stack, rand, world_seed, chunk_x, chunk_z);
-        local_cache.clear();
+        Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
+        cache.clear();
         if(cluster.get_size() >= MIN_CLUSTER_SIZE) {
             uint64_t collector_idx = atomicAdd(collector_size, 1);
             collector[collector_idx] = cluster;
@@ -222,7 +213,6 @@ void manage_device(int32_t device_index) {
 
         // Synchronize:
         cudaDeviceSynchronize();
-        info(device_index, "Synchronized.");
 
         // Catch errors:
         cudaError_t code;

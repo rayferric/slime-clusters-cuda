@@ -12,16 +12,16 @@
     #define DEVICE_CALL
 #endif
 
-#define BEGIN_CRITICAL(lock) \
-    bool _locked = true; \
-    while(_locked) { \
-        if(atomicExch(lock, 1) == 0) {
+// #define BEGIN_CRITICAL(lock) \
+//     bool _locked = true; \
+//     while(_locked) { \
+//         if(atomicExch(lock, 1) == 0) {
 
-#define END_CRITICAL(lock) \
-            _locked = false; \
-            atomicExch(lock, 0); \
-        } \
-    }
+// #define END_CRITICAL(lock) \
+//             _locked = false; \
+//             atomicExch(lock, 0); \
+//         } \
+//     }
 
 namespace CUDA {
     // Standarizes signed integer overflow behavior:
