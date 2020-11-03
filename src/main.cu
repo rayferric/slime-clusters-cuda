@@ -11,6 +11,8 @@
 #include <thread>
 #include <vector>
 
+#include "boinc/boinc_api.h"
+
 #include "bit_field.h"
 #include "cluster.h"
 #include "cuda.h"
@@ -258,6 +260,14 @@ uint64_t get_millis() {
 }
 
 int32_t main(int32_t argc, char **argv) {
+    BOINC_OPTIONS options;
+
+    boinc_options_defaults(options);
+    options.multi_thread = true;
+    options.multi_process = true;
+    options.normal_thread_priority = true;
+    boinc_init_options(&options);
+
     log_file = fopen(LOG_FILE, "w");
 
     // Launch host threads:
@@ -299,5 +309,5 @@ int32_t main(int32_t argc, char **argv) {
     uint64_t found_snapshot = found_total.load();
     printf("Finished, %llu cluster%s found. (%llu s)\n", found_snapshot, found_snapshot == 1 ? " was" : "s were", (uint64_t)((get_millis() - start_time) * 0.001));
     
-    return 0;
+    return boinc_finish(0);
 }

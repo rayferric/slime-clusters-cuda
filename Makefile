@@ -1,13 +1,22 @@
-VCVARS="C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
+NVCC=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v8.0
+VCVARS=C:/Program Files (x86)/Microsoft Visual Studio 14.0/VC/bin/amd64/vcvars64.bat
+PLATFORM=windows
 
-default: build
-
-build:
+build-msvc:
 	IF NOT EXIST "bin" MD "bin"
-	$(VCVARS) && nvcc "src\main.cu" -o="bin\slime-clusters" -Wno-deprecated-gpu-targets --disable-warnings
+	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"$(NVCC)/include" -I"include" -I"include/boinc/$(PLATFORM)" -L"$(NVCC)/lib/x64" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O3
 
-test: build
-	bin/slime-clusters
+build-msvc-debug:
+	IF NOT EXIST "bin" MD "bin"
+	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"$(NVCC)/include" -I"include" -I"include/boinc/$(PLATFORM)" -L"$(NVCC)/lib/x64" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler /Zi -Xcompiler /Fdbin// -Xlinker /DEBUG:FULL
+
+build-mingw:
+	IF NOT EXIST "bin" MD "bin"
+	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"$(NVCC)/include" -I"include" -I"include/boinc/$(PLATFORM)" -L"$(NVCC)/lib/x64" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O3 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+
+
+build-mingw-debug:
+	IF NOT EXIST "bin" MD "bin"
+	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"$(NVCC)/include" -I"include" -I"include/boinc/$(PLATFORM)" -L"$(NVCC)/lib/x64" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+ -Xcompiler -g
 
 clean:
 	IF EXIST "bin" RD /S /Q "bin"
