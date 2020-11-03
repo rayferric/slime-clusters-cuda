@@ -31,7 +31,6 @@
 #define STATE_FILE ".state"
 
 #define EXTENTS 512
-#define MIN_CLUSTER_SIZE 20
 
 #define STACK_SIZE 128
 
@@ -115,7 +114,7 @@ DEVICE_CALL Cluster explore_cluster(BitField &cache, Stack<Offset> &stack, JavaR
     return Cluster(world_seed, cluster_size, min_x, min_z, max_x, max_z);
 }
 
-__global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector) {
+__global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector, uint32_t min_cluster_size) {
     uint64_t world_seed = blockIdx.x + offset;
 
     uint64_t min_chunks_per_thread = CHUNKS_PER_SEED / blockDim.x; // Preferred number of chunks to be processed by a thread.
@@ -142,7 +141,7 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
         cache.clear();
         // Stack is left empty after very call to explore_cluster(...), so there's no need to clear it here.
         Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
-        if(cluster.get_size() >= MIN_CLUSTER_SIZE) {
+        if(cluster.get_size() >= min_cluster_size) {
             uint64_t collector_idx = atomicAdd(collector_size, 1);
             collector[collector_idx] = cluster;
         }
@@ -153,6 +152,7 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
 
 FILE *log_file, *state_file;
 uint64_t offset = 0, start = 0, end = 0;
+uint32_t min_cluster_size = 25;
 std::atomic<uint64_t> found_total(0);
 std::atomic<int32_t> devices_running(0);
 std::mutex stderr_mutex, log_file_mutex, offset_mutex;
@@ -164,14 +164,20 @@ void log(const std::string &text) {
 }
 
 void info(int32_t device_index, const std::string &text) {
-    std::lock_guard<std::mutex> stdout_guard(stderr_mutex);
-    fprintf(stderr, "[DEVICE #%d/INFO]: %s\n", device_index,  text.c_str());
+    std::lock_guard<std::mutex> stderr_guard(stderr_mutex);
+    if(device_index < 0)
+        fprintf(stderr, "[HOST/INFO]: %s\n", text.c_str());
+    else
+        fprintf(stderr, "[DEVICE #%d/INFO]: %s\n", device_index,  text.c_str());
     fflush(stderr);
 }
 
 void error(int32_t device_index, const std::string &text) {
     std::lock_guard<std::mutex> stderr_guard(stderr_mutex);
-    fprintf(stderr, "[DEVICE #%d/ERROR]: %s\n", device_index,  text.c_str());
+    if(device_index < 0)
+        fprintf(stderr, "[HOST/ERROR]: %s\n", text.c_str());
+    else
+        fprintf(stderr, "[DEVICE #%d/ERROR]: %s\n", device_index,  text.c_str());
     fflush(stderr);
 }
 
@@ -203,7 +209,7 @@ void manage_device(int32_t device_index) {
         uint64_t block_count = end - offset + 1; // +1, cause {end} is inclusive
         if(block_count > max_block_count)
             block_count = max_block_count;
-        kernel<<<block_count, BLOCK_SIZE>>>(block_count, offset, d_collector_size, d_collector);
+        kernel<<<block_count, BLOCK_SIZE>>>(block_count, offset, d_collector_size, d_collector, min_cluster_size);
         offset += block_count;
         offset_mutex.unlock();
 
@@ -249,9 +255,10 @@ void manage_device(int32_t device_index) {
 
 //
 // Accepted options:
-// -d=<index> | --device  | specify a compute device to be used, use one time for each requested device
-// -s=<index> | --start   | what seed to start the search at (inclusive)
-// -e=<index> | --end     | what seed to end the search at (inclusive)
+// -d=<int> | --device  | specify a compute device to be used, use one time for each requested device
+// -s=<int> | --start   | what seed to start the search at (inclusive)
+// -e=<int> | --end     | what seed to end the search at (inclusive)
+// -c=<int> | --cluster | set the minimum searched size of a cluster (default: 25)
 // 
 int32_t main(int32_t argc, char **argv) {
     std::vector<int32_t> devices;
@@ -262,9 +269,11 @@ int32_t main(int32_t argc, char **argv) {
 		if(strcmp(option, "-d") == 0 || strcmp(option, "--device") == 0)
 			devices.push_back(atoi(value));
 		else if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
-			sscanf(argv[i + 1], "%llu", &start);
+			sscanf(value, "%llu", &start);
 		else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
-			sscanf(argv[i + 1], "%llu", &end);
+            sscanf(value, "%llu", &end);
+        else if(strcmp(option, "-c") == 0 || strcmp(option, "--cluster") == 0)
+			sscanf(value, "%u", &min_cluster_size);
     }
     if(end < start)
         end = start;
@@ -287,17 +296,22 @@ int32_t main(int32_t argc, char **argv) {
 
     state_file = boinc_fopen(boinc_state_path.c_str(), "r");
     if(state_file == nullptr) {
-        fprintf(stderr, "No checkpoint yet available.\n");
+        info(-1, "No checkpoint yet available.");
         offset = start;
     } else {
         fscanf(state_file, "%llu", &offset);
         fclose(state_file);
         if(offset < start || offset > end) {
-            fprintf(stderr, "Checkpoint was outdated.\n");
+            error(-1, "Checkpoint was outdated.");
             offset = start;
         } else
-            fprintf(stderr, "Loaded checkpoint: %llu\n", offset);
+            info(-1, "Loaded checkpoint: " + std::to_string(offset));
     }
+
+    info(-1, "Start offset: " + std::to_string(start));
+    info(-1, "End offset: " + std::to_string(end));
+    info(-1, "Current offset: " + std::to_string(offset));
+    info(-1, "Required cluster size: " + std::to_string(min_cluster_size));
 
     // Launch host threads:
     devices_running.store(devices.size());
@@ -321,7 +335,8 @@ int32_t main(int32_t argc, char **argv) {
 
         boinc_fraction_done((double)(offset_snapshot - start) / (end - start + 1));
 
-        if(boinc_time_to_checkpoint() || ++secs_since_checkpoint >= 30) {
+        // 10 secs have passed or BOINC was suspended"
+        if(boinc_time_to_checkpoint() || ++secs_since_checkpoint >= 10) {
             boinc_begin_critical_section();
 
             // Recreate checkpoint file:
@@ -336,19 +351,23 @@ int32_t main(int32_t argc, char **argv) {
 
             boinc_checkpoint_completed();
             boinc_end_critical_section();
-            fprintf(stderr, "Checkpoint saved.\n");
+
+            // Use synchronized info(), cause device threads may be writing to stderr at the same time.
+            info(-1, "Checkpoint saved.\n");
             secs_since_checkpoint = 0;
         }
     }
 
     // Join host threads:
-    for(std::thread &thread : threads)
-        thread.join();
+    for(std::thread &thread : threads) {
+        if(thread.joinable())
+            thread.join();
+    }
 
     fclose(log_file);
 
     uint64_t found_snapshot = found_total.load();
-    fprintf(stderr, "Finished, %llu cluster%s found.\n", found_snapshot, found_snapshot == 1 ? " was" : "s were");
+    fprintf(stderr, "[HOST/INFO]: Finished, %llu cluster%s found.\n", found_snapshot, found_snapshot == 1 ? " was" : "s were");
     
     return boinc_finish(0);
 }
