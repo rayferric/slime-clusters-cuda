@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-#include "boinc/boinc_api.h"
+#include "boinc_api.h"
 
 #include "bit_field.h"
 #include "cluster.h"
@@ -21,21 +21,14 @@
 #include "random.h"
 #include "stack.h"
 
-// How many compute devices to use:
-#define DEVICE_COUNT 1
-
 // This can be tuned, should be a multiple of warp size. (Doesn't influence device occupancy.)
 #define BLOCK_SIZE 512
-
-// Where to start and how far to explore:
-#define WORK_OFFSET 0
-#define WORK_SIZE (1UI64 << 48)
 
 // Size of the collector array, or how many items are expected to be found in a single work unit:
 #define MAX_COLLECTOR_SIZE (1 << 16)
 
-#define REPORT_DELAY 10000
 #define LOG_FILE "clusters.txt"
+#define STATE_FILE ".state"
 
 #define EXTENTS 512
 #define MIN_CLUSTER_SIZE 20
@@ -123,7 +116,7 @@ DEVICE_CALL Cluster explore_cluster(BitField &cache, Stack<Offset> &stack, JavaR
 }
 
 __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector) {
-    uint64_t world_seed = blockIdx.x + offset + WORK_OFFSET;
+    uint64_t world_seed = blockIdx.x + offset;
 
     uint64_t min_chunks_per_thread = CHUNKS_PER_SEED / blockDim.x; // Preferred number of chunks to be processed by a thread.
     uint64_t starting_chunk = threadIdx.x * min_chunks_per_thread;
@@ -158,11 +151,11 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
 
 // End of device code.
 
-FILE *log_file;
-uint64_t offset = 0;
+FILE *log_file, *state_file;
+uint64_t offset = 0, start = 0, end = 0;
 std::atomic<uint64_t> found_total(0);
-std::atomic<int32_t> devices_running(DEVICE_COUNT);
-std::mutex stdout_mutex, stderr_mutex, log_file_mutex, offset_mutex;
+std::atomic<int32_t> devices_running(0);
+std::mutex stderr_mutex, log_file_mutex, offset_mutex;
 
 void log(const std::string &text) {
     std::lock_guard<std::mutex> log_file_guard(log_file_mutex);
@@ -171,9 +164,9 @@ void log(const std::string &text) {
 }
 
 void info(int32_t device_index, const std::string &text) {
-    std::lock_guard<std::mutex> stdout_guard(stdout_mutex);
-    fprintf(stdout, "[DEVICE #%d/INFO]: %s\n", device_index,  text.c_str());
-    fflush(stdout);
+    std::lock_guard<std::mutex> stdout_guard(stderr_mutex);
+    fprintf(stderr, "[DEVICE #%d/INFO]: %s\n", device_index,  text.c_str());
+    fflush(stderr);
 }
 
 void error(int32_t device_index, const std::string &text) {
@@ -202,12 +195,12 @@ void manage_device(int32_t device_index) {
     
     // Offset is also accessed from within the while condition.
     offset_mutex.lock();
-    while(offset < WORK_SIZE) {
+    while(offset <= end) {
         // Reset caches:
         cudaMemset(d_collector_size, 0, sizeof(uint64_t));
 
         // Launch one wave (one block does one seed):
-        uint64_t block_count = WORK_SIZE - offset;
+        uint64_t block_count = end - offset + 1; // +1, cause {end} is inclusive
         if(block_count > max_block_count)
             block_count = max_block_count;
         kernel<<<block_count, BLOCK_SIZE>>>(block_count, offset, d_collector_size, d_collector);
@@ -254,12 +247,28 @@ void manage_device(int32_t device_index) {
     devices_running--;
 }
 
-uint64_t get_millis() {
-    auto now = std::chrono::system_clock::now();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-}
-
+//
+// Accepted options:
+// -d=<index> | --device  | specify a compute device to be used, use one time for each requested device
+// -s=<index> | --start   | what seed to start the search at (inclusive)
+// -e=<index> | --end     | what seed to end the search at (inclusive)
+// 
 int32_t main(int32_t argc, char **argv) {
+    std::vector<int32_t> devices;
+	for(int32_t i = 1; i < argc; i += 2) {
+        const char *option = argv[i];
+        const char *value = argv[i + 1];
+
+		if(strcmp(option, "-d") == 0 || strcmp(option, "--device") == 0)
+			devices.push_back(atoi(value));
+		else if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
+			sscanf(argv[i + 1], "%llu", &start);
+		else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
+			sscanf(argv[i + 1], "%llu", &end);
+    }
+    if(end < start)
+        end = start;
+
     BOINC_OPTIONS options;
 
     boinc_options_defaults(options);
@@ -268,35 +277,67 @@ int32_t main(int32_t argc, char **argv) {
     options.normal_thread_priority = true;
     boinc_init_options(&options);
 
-    log_file = fopen(LOG_FILE, "w");
+    std::string boinc_log_path, boinc_state_path;
+    if(boinc_resolve_filename_s(LOG_FILE, boinc_log_path))
+        boinc_temporary_exit(5, "Failed to access log file.", true);
+    if(boinc_resolve_filename_s(STATE_FILE, boinc_state_path))
+        boinc_temporary_exit(5, "Failed to access checkpoint file.", true);
+
+    log_file = boinc_fopen(boinc_log_path.c_str(), "a");
+
+    state_file = boinc_fopen(boinc_state_path.c_str(), "r");
+    if(state_file == nullptr) {
+        fprintf(stderr, "No checkpoint yet available.\n");
+        offset = start;
+    } else {
+        fscanf(state_file, "%llu", &offset);
+        fclose(state_file);
+        if(offset < start || offset > end) {
+            fprintf(stderr, "Checkpoint was outdated.\n");
+            offset = start;
+        } else
+            fprintf(stderr, "Loaded checkpoint: %llu\n", offset);
+    }
 
     // Launch host threads:
-    std::vector<std::thread> threads(DEVICE_COUNT);
-    for(int32_t i = 0; i < DEVICE_COUNT; i++)
-        threads[i] = std::thread(manage_device, i);
+    devices_running.store(devices.size());
+    std::vector<std::thread> threads(devices.size());
+    for(int32_t device_index : devices)
+        threads.push_back(std::thread(manage_device, device_index));
 
     // Monitor progress:
-    uint64_t start_time = get_millis();
+    int32_t secs_since_checkpoint = 0;
     while(true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(REPORT_DELAY));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         if(devices_running.load() == 0)
             break;
 
-        uint64_t elapsed = get_millis() - start_time;
-        double progress, speed, eta;
+        uint64_t offset_snapshot;
         {
             std::lock_guard<std::mutex> offset_guard(offset_mutex);
-            
-            progress = ((double)offset / WORK_SIZE) * 100;
-            speed = offset / (elapsed * 0.001);
-            eta = (WORK_SIZE - offset) / speed;
+            offset_snapshot = offset;
         }
 
-        {
-            std::lock_guard<std::mutex> stdout_guard(stdout_mutex);
-            printf("%f %% - %llu found - %llu seeds/s - %llu s elapsed - ETA %llu s\n", progress, found_total.load(), (uint64_t)speed, elapsed / 1000, (uint64_t)eta);
-            fflush(stdout);
+        boinc_fraction_done((double)(offset_snapshot - start) / (end - start + 1));
+
+        if(boinc_time_to_checkpoint() || ++secs_since_checkpoint >= 30) {
+            boinc_begin_critical_section();
+
+            // Recreate checkpoint file:
+            boinc_delete_file(boinc_state_path.c_str());
+            state_file = boinc_fopen(boinc_state_path.c_str(), "w");
+
+            // Actually, this should always execute:
+            if(state_file != nullptr) {
+                fprintf(state_file, "%llu", offset);    
+                fclose(state_file);
+            }
+
+            boinc_checkpoint_completed();
+            boinc_end_critical_section();
+            fprintf(stderr, "Checkpoint saved.\n");
+            secs_since_checkpoint = 0;
         }
     }
 
@@ -307,7 +348,7 @@ int32_t main(int32_t argc, char **argv) {
     fclose(log_file);
 
     uint64_t found_snapshot = found_total.load();
-    printf("Finished, %llu cluster%s found. (%llu s)\n", found_snapshot, found_snapshot == 1 ? " was" : "s were", (uint64_t)((get_millis() - start_time) * 0.001));
+    fprintf(stderr, "Finished, %llu cluster%s found.\n", found_snapshot, found_snapshot == 1 ? " was" : "s were");
     
     return boinc_finish(0);
 }
