@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,6 +50,8 @@ const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64
 
 // Device code:
 
+__constant__ uint8_t c_min_cluster_size;
+
 class Offset {
 public:
     int8_t x, z;
@@ -85,7 +88,7 @@ DEVICE_CALL Cluster explore_cluster(BitField &cache, Stack<Offset> &stack, JavaR
         uint64_t cache_idx = (offset.x + CACHE_EXTENTS) * (CACHE_EXTENTS * 2UI64) + (offset.z + CACHE_EXTENTS);
         if(cache.get(cache_idx))
             continue;
-            cache.set(cache_idx, true);
+        cache.set(cache_idx, true);
 
         if(!check_slime_chunk(rand, world_seed, chunk_x, chunk_z))
             continue;
@@ -114,7 +117,7 @@ DEVICE_CALL Cluster explore_cluster(BitField &cache, Stack<Offset> &stack, JavaR
     return Cluster(world_seed, cluster_size, min_x, min_z, max_x, max_z);
 }
 
-__global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector, uint32_t min_cluster_size) {
+__global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collector_size, Cluster *collector) {
     uint64_t world_seed = blockIdx.x + offset;
 
     uint64_t min_chunks_per_thread = CHUNKS_PER_SEED / blockDim.x; // Preferred number of chunks to be processed by a thread.
@@ -141,7 +144,7 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
         cache.clear();
         // Stack is left empty after very call to explore_cluster(...), so there's no need to clear it here.
         Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
-        if(cluster.get_size() >= min_cluster_size) {
+        if(cluster.get_size() >= c_min_cluster_size) {
             uint64_t collector_idx = atomicAdd(collector_size, 1);
             collector[collector_idx] = cluster;
         }
@@ -151,10 +154,9 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
 // End of device code.
 
 FILE *log_file, *state_file;
-uint64_t offset = 0, start = 0, end = 0;
-uint32_t min_cluster_size = 25;
+uint64_t offset = 0;
 std::atomic<uint64_t> found_total(0);
-std::atomic<int32_t> devices_running(0);
+std::atomic<int32_t> num_devices_running(0);
 std::mutex stderr_mutex, log_file_mutex, offset_mutex;
 
 void log(const std::string &text) {
@@ -181,7 +183,7 @@ void error(int32_t device_index, const std::string &text) {
     fflush(stderr);
 }
 
-void manage_device(int32_t device_index) {
+void manage_device(int32_t device_index, uint64_t start, uint64_t end, uint8_t min_cluster_size) {
     cudaSetDevice(device_index);
 
     // Approximate the number of threads that has to be launched per wave for maximum performance:
@@ -191,6 +193,8 @@ void manage_device(int32_t device_index) {
     int32_t max_block_count = pref_wave_size / BLOCK_SIZE;
 
     info(device_index, "Blocks per wave: " + std::to_string(max_block_count));
+
+    cudaMemcpyToSymbol(c_min_cluster_size, &min_cluster_size, sizeof(uint8_t));
 
     // Found items are collected in video memory.
     // Any collected items will be transferred to the host in-between work unit executions.
@@ -209,7 +213,7 @@ void manage_device(int32_t device_index) {
         uint64_t block_count = end - offset + 1; // +1, cause {end} is inclusive
         if(block_count > max_block_count)
             block_count = max_block_count;
-        kernel<<<block_count, BLOCK_SIZE>>>(block_count, offset, d_collector_size, d_collector, min_cluster_size);
+        kernel<<<block_count, BLOCK_SIZE>>>(block_count, offset, d_collector_size, d_collector);
         offset += block_count;
         offset_mutex.unlock();
 
@@ -250,30 +254,34 @@ void manage_device(int32_t device_index) {
     cudaFree(d_collector);
     cudaFree(d_collector_size);
 
-    devices_running--;
+    num_devices_running--;
 }
 
 //
 // Accepted options:
-// -d=<int> | --device  | specify a compute device to be used, use one time for each requested device
-// -s=<int> | --start   | what seed to start the search at (inclusive)
-// -e=<int> | --end     | what seed to end the search at (inclusive)
-// -c=<int> | --cluster | set the minimum searched size of a cluster (default: 25)
+// -d <int> | --device  | specify a compute device to be used, use one time for each requested device
+// -s <int> | --start   | what seed to start the search at (inclusive) (default: 0)
+// -e <int> | --end     | what seed to end the search at (inclusive) (default: 0)
+// -c <int> | --cluster | set the minimum searched size of a cluster (default: 25)
 // 
 int32_t main(int32_t argc, char **argv) {
-    std::vector<int32_t> devices;
+    uint64_t start = 0, end = 0;
+    uint8_t min_cluster_size = 25;
+
+    // Use set to eliminate duplicate entries:
+    std::set<int32_t> requested_devices;
 	for(int32_t i = 1; i < argc; i += 2) {
         const char *option = argv[i];
         const char *value = argv[i + 1];
 
 		if(strcmp(option, "-d") == 0 || strcmp(option, "--device") == 0)
-			devices.push_back(atoi(value));
+			requested_devices.insert(atoi(value));
 		else if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
-			sscanf(value, "%llu", &start);
+			sscanf(value, "%I64u", &start);
 		else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
-            sscanf(value, "%llu", &end);
+            sscanf(value, "%I64u", &end);
         else if(strcmp(option, "-c") == 0 || strcmp(option, "--cluster") == 0)
-			sscanf(value, "%u", &min_cluster_size);
+			sscanf(value, "%I8u", &min_cluster_size);
     }
     if(end < start)
         end = start;
@@ -299,7 +307,7 @@ int32_t main(int32_t argc, char **argv) {
         info(-1, "No checkpoint yet available.");
         offset = start;
     } else {
-        fscanf(state_file, "%llu", &offset);
+        fscanf(state_file, "%I64u", &offset);
         fclose(state_file);
         if(offset < start || offset > end) {
             error(-1, "Checkpoint was outdated.");
@@ -314,17 +322,24 @@ int32_t main(int32_t argc, char **argv) {
     info(-1, "Required cluster size: " + std::to_string(min_cluster_size));
 
     // Launch host threads:
-    devices_running.store(devices.size());
-    std::vector<std::thread> threads(devices.size());
-    for(int32_t device_index : devices)
-        threads.push_back(std::thread(manage_device, device_index));
+    int32_t num_devices_initialized = requested_devices.size();
+    num_devices_running.store(num_devices_initialized);
+    std::vector<std::thread> threads(num_devices_initialized);
+    for(int32_t device_index : requested_devices)
+        threads.push_back(std::thread(manage_device, device_index, start, end, min_cluster_size));
 
     // Monitor progress:
     int32_t secs_since_checkpoint = 0;
     while(true) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-        if(devices_running.load() == 0)
+        if(num_devices_running.load() < num_devices_initialized) {
+            std::lock_guard<std::mutex> offset_guard(offset_mutex);
+            if(offset <= end)
+                error(-1, "A compute device has encountered an unexpected shutdown. See further up for device logs.");
+            num_devices_initialized--;
+        }
+        if(num_devices_initialized < 1)
             break;
 
         uint64_t offset_snapshot;
@@ -332,10 +347,10 @@ int32_t main(int32_t argc, char **argv) {
             std::lock_guard<std::mutex> offset_guard(offset_mutex);
             offset_snapshot = offset;
         }
-
+        
         boinc_fraction_done((double)(offset_snapshot - start) / (end - start + 1));
 
-        // 10 secs have passed or BOINC was suspended"
+        // 10 secs have passed or BOINC was suspended:
         if(boinc_time_to_checkpoint() || ++secs_since_checkpoint >= 10) {
             boinc_begin_critical_section();
 
@@ -345,29 +360,32 @@ int32_t main(int32_t argc, char **argv) {
 
             // Actually, this should always execute:
             if(state_file != nullptr) {
-                fprintf(state_file, "%llu", offset);    
+                fprintf(state_file, "%I64u", offset_snapshot);    
                 fclose(state_file);
             }
 
             boinc_checkpoint_completed();
             boinc_end_critical_section();
 
-            // Use synchronized info(), cause device threads may be writing to stderr at the same time.
-            info(-1, "Checkpoint saved.\n");
+            info(-1, "Checkpoint saved: " + std::to_string(offset_snapshot));
             secs_since_checkpoint = 0;
         }
     }
 
     // Join host threads:
-    for(std::thread &thread : threads) {
+    for(std::thread &thread : threads)
         if(thread.joinable())
             thread.join();
-    }
 
     fclose(log_file);
 
+    if(offset <= end)
+        return boinc_finish_message(1, "The program has finished but the task is not yet complete.\n"
+                "This indicates that a compute device has shut down during the process.\n"
+                "See the error logs for more information.", true);
+
     uint64_t found_snapshot = found_total.load();
-    fprintf(stderr, "[HOST/INFO]: Finished, %llu cluster%s found.\n", found_snapshot, found_snapshot == 1 ? " was" : "s were");
+    info(-1, "Finished, " + std::to_string(found_snapshot) + " cluster" + (found_snapshot == 1 ? " was" : "s were") + " found.");
     
     return boinc_finish(0);
 }
