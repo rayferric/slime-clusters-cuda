@@ -270,18 +270,18 @@ int32_t main(int32_t argc, char **argv) {
 
     // Use set to eliminate duplicate entries:
     std::set<int32_t> requested_devices;
-	for(int32_t i = 1; i < argc; i += 2) {
+    for(int32_t i = 1; i < argc; i += 2) {
         const char *option = argv[i];
         const char *value = argv[i + 1];
 
-		if(strcmp(option, "-d") == 0 || strcmp(option, "--device") == 0)
-			requested_devices.insert(atoi(value));
-		else if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
-			sscanf(value, "%I64u", &start);
-		else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
+        if(strcmp(option, "-d") == 0 || strcmp(option, "--device") == 0)
+            requested_devices.insert(atoi(value));
+        else if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
+            sscanf(value, "%I64u", &start);
+        else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
             sscanf(value, "%I64u", &end);
         else if(strcmp(option, "-c") == 0 || strcmp(option, "--cluster") == 0)
-			sscanf(value, "%I8u", &min_cluster_size);
+            sscanf(value, "%I8u", &min_cluster_size);
     }
     if(end < start)
         end = start;
