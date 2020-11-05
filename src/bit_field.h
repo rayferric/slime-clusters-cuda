@@ -45,7 +45,7 @@ public:
         assert(index < size && "Index is out of bounds.");
 
         size_t buffer_index = index / UINT64_BITS;
-        int32_t bit_offset = (int32_t)(index % UINT64_BITS);
+        int32_t bit_offset = static_cast<int32_t>(index % UINT64_BITS);
 
         return ((buffer[buffer_index] >> bit_offset) & 1) == 1;
     }
@@ -54,12 +54,12 @@ public:
         assert(index < size && "Index is out of bounds.");
 
         size_t buffer_index = index / UINT64_BITS;
-        int32_t bit_offset = (int32_t)(index % UINT64_BITS);
+        int32_t bit_offset = static_cast<int32_t>(index % UINT64_BITS);
 
         if(state)
-            buffer[buffer_index] |= 1UI64 << bit_offset;
+            buffer[buffer_index] |= 1ULL << bit_offset;
         else
-            buffer[buffer_index] &= ~(1UI64 << bit_offset);
+            buffer[buffer_index] &= ~(1ULL << bit_offset);
     }
 
     HYBRID_CALL void clear() {

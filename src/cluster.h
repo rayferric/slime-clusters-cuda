@@ -20,8 +20,11 @@ public:
     }
 
     std::string to_string() const {
-        return "Cluster of " + std::to_string(size) + " chunks at " + std::to_string(get_center_x() * 16) +
-                ", " + std::to_string(get_center_z() * 16) + " (seed: " + std::to_string(world_seed) + ").";
+        // return "Cluster of " + std::to_string(size) + " chunks at " + std::to_string(get_center_x() * 16) +
+        //         ", " + std::to_string(get_center_z() * 16) + " (seed: " + std::to_string(world_seed) + ").";
+        
+        return "(" + std::to_string(size) + "): " + std::to_string(get_center_x() * 16) + ", " +
+                std::to_string(get_center_z() * 16) + " (" + std::to_string(world_seed) + ")";
     }
     
     HYBRID_CALL uint64_t get_world_seed() const {

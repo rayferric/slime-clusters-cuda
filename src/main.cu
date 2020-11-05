@@ -37,7 +37,7 @@
 
 #define UINT64_BITS (sizeof(uint64_t) * 8)
 
-const size_t CACHE_SIZE_BITS = (CACHE_EXTENTS * 2UI64) * (CACHE_EXTENTS * 2UI64);
+const size_t CACHE_SIZE_BITS = (CACHE_EXTENTS * 2ULL) * (CACHE_EXTENTS * 2ULL);
 const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64_BITS);
 
 // Device code:
@@ -58,9 +58,9 @@ public:
 HYBRID_CALL bool check_slime_chunk(JavaRandom &rand, uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
     world_seed += CUDA::wrapping_mul(CUDA::wrapping_mul(chunk_x, chunk_x), 0x4C1906);
     world_seed += CUDA::wrapping_mul(chunk_x, 0x5AC0DB);
-    world_seed += CUDA::wrapping_mul(chunk_z, chunk_z) * 0x4307A7UI64;
+    world_seed += CUDA::wrapping_mul(chunk_z, chunk_z) * 0x4307A7ULL;
     world_seed += CUDA::wrapping_mul(chunk_z, 0x5F24F);
-    world_seed ^= 0x3AD8025FUI64;
+    world_seed ^= 0x3AD8025FULL;
 
     rand.set_seed(world_seed);
     rand.scramble();
@@ -79,7 +79,7 @@ DEVICE_CALL Cluster explore_cluster(BitField &cache, Stack<Offset> &stack, JavaR
         int32_t chunk_x = origin_x + offset.x;
         int32_t chunk_z = origin_z + offset.z;
 
-        uint64_t cache_idx = (offset.x + CACHE_EXTENTS) * (CACHE_EXTENTS * 2UI64) + (offset.z + CACHE_EXTENTS);
+        uint64_t cache_idx = (offset.x + CACHE_EXTENTS) * (CACHE_EXTENTS * 2ULL) + (offset.z + CACHE_EXTENTS);
         if(cache.get(cache_idx))
             continue;
         cache.set(cache_idx, true);
@@ -237,7 +237,7 @@ int32_t main(int32_t argc, char **argv) {
     fprintf(stderr, "Blocks per wave: %I32\n", max_block_count);
 
     // Allocate constants:
-    uint64_t chunks_per_seed = (search_region_extents * 2UI64) * (search_region_extents * 2UI64);
+    uint64_t chunks_per_seed = (search_region_extents * 2ULL) * (search_region_extents * 2ULL);
     cudaMemcpyToSymbol(c_min_cluster_size, &min_cluster_size, sizeof(uint8_t));
     cudaMemcpyToSymbol(c_search_region_extents, &search_region_extents, sizeof(int32_t));
     cudaMemcpyToSymbol(c_chunks_per_seed, &chunks_per_seed, sizeof(uint64_t));
