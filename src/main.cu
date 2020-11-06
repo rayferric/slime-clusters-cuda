@@ -132,10 +132,13 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
     Stack<Offset> stack = Stack<Offset>::wrap(stack_buffer, STACK_SIZE);
     JavaRandom rand = JavaRandom();
 
-    for(uint64_t i = 0; i < chunks_here; i++) {
-        uint64_t chunk_idx = i + starting_chunk;
-        int32_t chunk_x = (chunk_idx / (c_search_region_extents * 2)) - c_search_region_extents;
-        int32_t chunk_z = (chunk_idx % (c_search_region_extents * 2)) - c_search_region_extents;
+    for(uint64_t i = 0; i < chunks_here; i += 4) {
+        uint64_t chunk_idx = (i & ~4ULL) + starting_chunk;
+        int32_t chunk_x = chunk_idx / (c_search_region_extents * 2);
+        int32_t chunk_z = chunk_idx % (c_search_region_extents * 2);
+        chunk_z += (chunk_x % 8) ^ ((i % 8) / 4 * 7);
+        chunk_x -= c_search_region_extents;
+        chunk_z -= c_search_region_extents;
 
         cache.clear();
         // Stack is left empty after every call to explore_cluster(...), so there's no need to clear it here.
