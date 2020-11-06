@@ -144,7 +144,7 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
         // Stack is left empty after every call to explore_cluster(...), so there's no need to clear it here.
         Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
         if(cluster.get_size() >= c_min_cluster_size) {
-            uint64_t collector_idx = atomicAdd(collector_size, 1);
+            uint64_t collector_idx = atomicAdd(static_cast<unsigned long long *>(collector_size), 1);
             collector[collector_idx] = cluster;
         }
     }
