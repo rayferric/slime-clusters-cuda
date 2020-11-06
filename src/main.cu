@@ -42,8 +42,7 @@ const size_t CACHE_SIZE_UINT64 = ((CACHE_SIZE_BITS + (UINT64_BITS - 1)) / UINT64
 
 // Device code:
 
-__constant__ uint8_t c_min_cluster_size;
-__constant__ int32_t c_search_region_extents;
+__constant__ int32_t c_min_cluster_size, c_search_region_extents;
 __constant__ uint64_t c_chunks_per_seed;
 
 class Offset {
@@ -164,20 +163,19 @@ uint64_t get_millis() {
 // 
 int32_t main(int32_t argc, char **argv) {
     uint64_t start_offset = 0, end_offset = 0, offset = 0;
-    uint8_t min_cluster_size = 25;
-    int32_t search_region_extents = 512;
+    int32_t min_cluster_size = 25, search_region_extents = 512;
     
     for(int32_t i = 1; i < argc; i += 2) {
         const char *option = argv[i], *value = argv[i + 1];
 
         if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
-            sscanf(value, "%I64u", &start_offset);
+            sscanf(value, "%llu", &start_offset);
         else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
-            sscanf(value, "%I64u", &end_offset);
+            sscanf(value, "%llu", &end_offset);
         else if(strcmp(option, "-c") == 0 || strcmp(option, "--cluster") == 0)
-            sscanf(value, "%I8u", &min_cluster_size);
+            sscanf(value, "%d", &min_cluster_size);
         else if(strcmp(option, "-r") == 0 || strcmp(option, "--region") == 0)
-            sscanf(value, "%I32", &search_region_extents);
+            sscanf(value, "%d", &search_region_extents);
     }
     if(end_offset < start_offset)
         end_offset = start_offset;
@@ -193,7 +191,7 @@ int32_t main(int32_t argc, char **argv) {
     
     int32_t device_index = 0;
     if(aid.gpu_device_num > 0)
-        fprintf(stderr, "Setting up BOINC specified device #%I32\n", device_index = aid.gpu_device_num);
+        fprintf(stderr, "Setting up BOINC specified device #%d\n", device_index = aid.gpu_device_num);
     else
         fprintf(stderr, "Using  default device #0.\n");
 
@@ -210,19 +208,19 @@ int32_t main(int32_t argc, char **argv) {
         fprintf(stderr, "No checkpoint yet available.\n");
         offset = start_offset;
     } else {
-        fscanf(state_file, "%I64u", &offset);
+        fscanf(state_file, "%llu", &offset);
         fclose(state_file);
         if(offset < start_offset || offset > end_offset) {
-            fprintf(stderr, "Checkpoint was outdated.\n");
+            fprintf(stderr, "Checkpoint was outdated, restarting from the beginning.\n");
             offset = start_offset;
         } else
-            fprintf(stderr, "Loaded checkpoint: %I64u\n", offset);
+            fprintf(stderr, "Loaded checkpoint: %llu\n", offset);
     }
 
-    fprintf(stderr, "Start offset: %I64u\n", start_offset);
-    fprintf(stderr, "End offset: %I64u\n", end_offset);
-    fprintf(stderr, "Current offset: %I64u\n", offset);
-    fprintf(stderr, "Required cluster size: %I8u\n", min_cluster_size);
+    fprintf(stderr, "Start offset: %llu\n", start_offset);
+    fprintf(stderr, "End offset: %llu\n", end_offset);
+    fprintf(stderr, "Current offset: %llu\n", offset);
+    fprintf(stderr, "Required cluster size: %d\n", min_cluster_size);
 
     // Init CUDA device:
 
@@ -234,11 +232,11 @@ int32_t main(int32_t argc, char **argv) {
     int32_t pref_wave_size = prop.maxThreadsPerMultiProcessor * prop.multiProcessorCount;
     int32_t max_block_count = pref_wave_size / BLOCK_SIZE;
 
-    fprintf(stderr, "Blocks per wave: %I32\n", max_block_count);
+    fprintf(stderr, "Blocks per wave: %d\n", max_block_count);
 
     // Allocate constants:
     uint64_t chunks_per_seed = (search_region_extents * 2ULL) * (search_region_extents * 2ULL);
-    cudaMemcpyToSymbol(c_min_cluster_size, &min_cluster_size, sizeof(uint8_t));
+    cudaMemcpyToSymbol(c_min_cluster_size, &min_cluster_size, sizeof(int32_t));
     cudaMemcpyToSymbol(c_search_region_extents, &search_region_extents, sizeof(int32_t));
     cudaMemcpyToSymbol(c_chunks_per_seed, &chunks_per_seed, sizeof(uint64_t));
 
@@ -305,20 +303,19 @@ int32_t main(int32_t argc, char **argv) {
         if(boinc_time_to_checkpoint() || ++secs_since_checkpoint >= 10) {
             boinc_begin_critical_section();
 
-            // Recreate checkpoint file:
-            boinc_delete_file(boinc_state_path.c_str());
+            // Recreate checkpoint file ("w" implicitly clears contents):
             state_file = boinc_fopen(boinc_state_path.c_str(), "w");
 
             // Actually, this should always execute:
             if(state_file != nullptr) {
-                fprintf(state_file, "%I64u", offset);    
+                fprintf(state_file, "%llu", offset);    
                 fclose(state_file);
             }
-
-            boinc_checkpoint_completed();
+            
             boinc_end_critical_section();
+            boinc_checkpoint_completed();
 
-            fprintf(stderr, "Checkpoint saved: %I64u\n", offset);
+            fprintf(stderr, "Checkpoint saved: %llu\n", offset);
             secs_since_checkpoint = 0;
         }
     }
@@ -333,6 +330,7 @@ int32_t main(int32_t argc, char **argv) {
                 "This indicates that your CUDA device has shut down during the process.\n"
                 "See error logs for more information.", true);
     
+    // Done! ^w^
     return boinc_finish_message(0, ("Finished, " + std::to_string(total_found) + " cluster" +
             (total_found == 1 ? " was" : "s were") + " found.").c_str(), false);
 }
