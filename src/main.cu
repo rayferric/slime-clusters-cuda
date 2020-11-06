@@ -8,7 +8,7 @@
 #include <cstdlib>
 #include <string>
 
-#include "boinc_api.h"
+#include "boinc/boinc_api.h"
 
 #include "bit_field.h"
 #include "cluster.h"
