@@ -9,9 +9,9 @@
 
 class JavaRandom : public Random {
 public:
-    HYBRID_CALL JavaRandom() : JavaRandom(0UI64) {}
+    HYBRID_CALL JavaRandom() : JavaRandom(0) {}
 
-    HYBRID_CALL JavaRandom(uint64_t seed) : Random(LCG(0x5DEECE66DUI64, 0xB, 1UI64 << 48), seed) {}
+    HYBRID_CALL JavaRandom(uint64_t seed) : Random(LCG(0x5DEECE66DULL, 0xB, 1ULL << 48), seed) {}
 
     HYBRID_CALL static bool next_boolean(Random *random) {
         return next(random, 1) != 0;
@@ -26,7 +26,7 @@ public:
 
         // When range is a power of 2:
         if((range & -range) == range)
-            return (int32_t)((range * (uint64_t)next(random, 31)) >> 31);
+            return static_cast<int32_t>((range * static_cast<uint64_t>(next(random, 31))) >> 31);
 
         int32_t bits, value;
         do {
@@ -37,15 +37,15 @@ public:
     }
 
     HYBRID_CALL static uint64_t next_long(Random *random) {
-        return ((uint64_t)next(random, 32) << 32) + next(random, 32);
+        return (static_cast<uint64_t>(next(random, 32)) << 32) + next(random, 32);
     }
 
     HYBRID_CALL static float next_float(Random *random) {
-        return next(random, 24) / ((float)(1 << 24));
+        return next(random, 24) / (static_cast<float>(1 << 24));
     }
 
     HYBRID_CALL static double next_double(Random *random) {
-        return (((uint64_t)next(random, 26) << 27) + next(random, 27)) / (double)(1UI64 << 53);
+        return ((static_cast<uint64_t>(next(random, 26)) << 27) + next(random, 27)) / static_cast<double>(1ULL << 53);
     }
 
     HYBRID_CALL bool next_boolean() {
@@ -74,7 +74,7 @@ public:
 
 private:
     HYBRID_CALL static int32_t next(Random *random, int32_t bits) {
-        return (int32_t)(random->next_seed() >> (48 - bits));
+        return static_cast<int32_t>(random->next_seed() >> (48 - bits));
     }
 };
 

@@ -24,9 +24,10 @@ public:
         return Stack(buffer, capacity);
     }
 
-    HYBRID_CALL void push(const T &value) {
-        assert(!is_full() && "The stack is full.");
+    HYBRID_CALL bool push(const T &value) {
+        if(is_full()) return false;
         buffer[size++] = value;
+        return true;
     }
 
     HYBRID_CALL T pop() {

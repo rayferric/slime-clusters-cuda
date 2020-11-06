@@ -1,10 +1,10 @@
 {
     "version": "2.0.0",
     "tasks": [
-		{
+        {
             "label": "Build",
             "type": "shell",
-            "command": "make build",
+            "command": "make msvc",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -13,11 +13,17 @@
         {
             "label": "Run",
             "type": "shell",
-            "command": "make test",
+            "command": "${workspaceFolder}\\bin\\slime-clusters.exe",
             "group": {
                 "kind": "test",
                 "isDefault": true
-            }
+            },
+            "dependsOn": "Build"
+        },
+        {
+            "label": "Build Debug",
+            "type": "shell",
+            "command": "make msvc-debug",
         }
     ]
 }

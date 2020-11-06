@@ -26,7 +26,7 @@
 namespace CUDA {
     // Standarizes signed integer overflow behavior:
     HYBRID_CALL int32_t wrapping_mul(int32_t a, int32_t b) {
-        return (int64_t)a * b;
+        return static_cast<int64_t>(a) * b;
     }
 }
 
