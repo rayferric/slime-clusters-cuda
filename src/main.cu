@@ -131,14 +131,13 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
     Stack<Offset> stack = Stack<Offset>::wrap(stack_buffer, STACK_SIZE);
     JavaRandom rand = JavaRandom();
 
-    // We iterate in a specific manner to slightly improve caching performance:
     for(uint64_t i = 0; i < chunks_here; i++) {
         uint64_t chunk_idx = i + starting_chunk;
         int32_t chunk_x = (chunk_idx / (c_search_region_extents * 2)) - c_search_region_extents;
         int32_t chunk_z = (chunk_idx % (c_search_region_extents * 2)) - c_search_region_extents;
 
         cache.clear();
-        // Stack is left empty after very call to explore_cluster(...), so there's no need to clear it here.
+        // Stack is left empty after every call to explore_cluster(...), so there's no need to clear it here.
         Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
         if(cluster.get_size() >= c_min_cluster_size) {
             uint64_t collector_idx = atomicAdd(collector_size, 1);
