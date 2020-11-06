@@ -7,21 +7,24 @@
 NVCC=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.0
 VCVARS=C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvars64.bat
 
-msvc:
+windows:
 	IF NOT EXIST "bin" MD "bin"
 	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O3
 
-msvc-debug:
+windows-debug:
 	IF NOT EXIST "bin" MD "bin"
 	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler /Zi -Xcompiler /Fdbin// -Xlinker /DEBUG:FULL
 
-mingw:
-	IF NOT EXIST "bin" MD "bin"
-	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O3 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+
+linux:
+	mkdir -p "bin"
+	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -L"lib" -lboinc_api -lboinc -m64 -O3 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+
 
-mingw-debug:
-	IF NOT EXIST "bin" MD "bin"
-	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+ -Xcompiler -g
-
-clean:
+linux-debug:
+	mkdir -p "bin"
+	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -L"lib" -lboinc_api -lboinc -m64 -O0 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+ -Xcompiler -g
+	
+windows-clean:
 	IF EXIST "bin" RD /S /Q "bin"
+	
+linux-clean:
+	rm -rf "bin"
