@@ -1,2 +1,9 @@
+# Generated directories:
 /bin/
+
+# Working files:
 /clusters.txt
+/.state
+/boinc_finish_called
+/boinc_lockfile
+/stderr.txt
