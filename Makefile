@@ -23,5 +23,9 @@ mingw-debug:
 	IF NOT EXIST "bin" MD "bin"
 	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include/boinc" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+ -Xcompiler -g
 
+linux:
+	mkdir -p bin
+	nvcc src/main.cu -o bin/slime-clusters -Iinclude/boinc -Llib -lboinc_api -lboinc
+
 clean:
 	IF EXIST "bin" RD /S /Q "bin"

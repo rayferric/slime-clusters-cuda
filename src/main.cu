@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cinttypes>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -140,7 +141,7 @@ __global__ void kernel(uint64_t block_count, uint64_t offset, uint64_t *collecto
         // Stack is left empty after every call to explore_cluster(...), so there's no need to clear it here.
         Cluster cluster = explore_cluster(cache, stack, rand, world_seed, chunk_x, chunk_z);
         if(cluster.get_size() >= c_min_cluster_size) {
-            uint64_t collector_idx = atomicAdd(collector_size, 1);
+            uint64_t collector_idx = atomicAdd((unsigned long long*) collector_size, 1);
             collector[collector_idx] = cluster;
         }
     }
@@ -168,9 +169,9 @@ int32_t main(int32_t argc, char **argv) {
         const char *option = argv[i], *value = argv[i + 1];
 
         if(strcmp(option, "-s") == 0 || strcmp(option, "--start") == 0)
-            sscanf(value, "%llu", &start_offset);
+            sscanf(value, "%" PRIu64, &start_offset);
         else if(strcmp(option, "-e") == 0 || strcmp(option, "--end") == 0)
-            sscanf(value, "%llu", &end_offset);
+            sscanf(value, "%" PRIu64, &end_offset);
         else if(strcmp(option, "-c") == 0 || strcmp(option, "--cluster") == 0)
             sscanf(value, "%d", &min_cluster_size);
         else if(strcmp(option, "-r") == 0 || strcmp(option, "--region") == 0)
@@ -207,18 +208,18 @@ int32_t main(int32_t argc, char **argv) {
         fprintf(stderr, "No checkpoint yet available.\n");
         offset = start_offset;
     } else {
-        fscanf(state_file, "%llu", &offset);
+        fscanf(state_file, "%" PRIu64, &offset);
         fclose(state_file);
         if(offset < start_offset || offset > end_offset) {
             fprintf(stderr, "Checkpoint was outdated, restarting from the beginning.\n");
             offset = start_offset;
         } else
-            fprintf(stderr, "Loaded checkpoint: %llu\n", offset);
+            fprintf(stderr, "Loaded checkpoint: %" PRIu64 "\n", offset);
     }
 
-    fprintf(stderr, "Start offset: %llu\n", start_offset);
-    fprintf(stderr, "End offset: %llu\n", end_offset);
-    fprintf(stderr, "Current offset: %llu\n", offset);
+    fprintf(stderr, "Start offset: %" PRIu64 "\n", start_offset);
+    fprintf(stderr, "End offset: %" PRIu64 "\n", end_offset);
+    fprintf(stderr, "Current offset: %" PRIu64 "\n", offset);
     fprintf(stderr, "Required cluster size: %d\n", min_cluster_size);
 
     // Init CUDA device:
@@ -307,14 +308,14 @@ int32_t main(int32_t argc, char **argv) {
 
             // Actually, this should always execute:
             if(state_file != nullptr) {
-                fprintf(state_file, "%llu", offset);    
+                fprintf(state_file, "%" PRIu64, offset);    
                 fclose(state_file);
             }
             
             boinc_end_critical_section();
             boinc_checkpoint_completed();
 
-            fprintf(stderr, "Checkpoint saved: %llu\n", offset);
+            fprintf(stderr, "Checkpoint saved: %" PRIu64 "\n", offset);
             secs_since_checkpoint = 0;
         }
     }
