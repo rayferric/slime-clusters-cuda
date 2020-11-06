@@ -4,7 +4,7 @@
         {
             "label": "Build",
             "type": "shell",
-            "command": "make msvc",
+            "command": "make windows",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -23,7 +23,7 @@
         {
             "label": "Build Debug",
             "type": "shell",
-            "command": "make msvc-debug",
+            "command": "make windows-debug",
         }
     ]
 }
