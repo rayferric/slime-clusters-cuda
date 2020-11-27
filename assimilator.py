@@ -4,7 +4,7 @@ import os
 from assimilator import *
 from Boinc import boinc_project_path
 
-class SlimeClustersAssimilator(Assimilator):
+class SlimePackAssimilator(Assimilator):
 	def __init__(self):
 		Assimilator.__init__(self)
 
@@ -13,7 +13,7 @@ class SlimeClustersAssimilator(Assimilator):
 			return
 		
 		src_file = self.get_file_path(canonical_result)
-		dst_dir = boinc_project_path.project_path('slime-clusters')
+		dst_dir = boinc_project_path.project_path('slimepack')
 		dst_file = os.path.join(dst_dir, 'results.txt')
 
 		if not os.path.exists(dst_dir):
@@ -23,4 +23,4 @@ class SlimeClustersAssimilator(Assimilator):
 			dst.writelines(src.readlines())
 
 if __name__ == "__main__":
-	SlimeClustersAssimilator().run()
+	SlimePackAssimilator().run()

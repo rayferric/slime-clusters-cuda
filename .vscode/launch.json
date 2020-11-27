@@ -5,7 +5,7 @@
 			"name": "Debug",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}\\bin\\slime-clusters.exe",
+			"program": "${workspaceFolder}\\bin\\slimepack.exe",
 			"symbolSearchPath":"${workspaceFolder}\\bin",
 			"stopAtEntry": false,
 			"cwd": "${workspaceFolder}",

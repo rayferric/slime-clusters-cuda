@@ -13,7 +13,7 @@
 		{
 			"label": "Run",
 			"type": "shell",
-			"command": "${workspaceFolder}\\bin\\slime-clusters.exe",
+			"command": "${workspaceFolder}\\bin\\slimepack.exe",
 			"group": {
 				"kind": "test",
 				"isDefault": true

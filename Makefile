@@ -9,19 +9,19 @@ VCVARS=C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliar
 
 windows:
 	IF NOT EXIST "bin" MD "bin"
-	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O3
+	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slimepack" -Wno-deprecated-gpu-targets -I"include" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O3
 
 windows-debug:
 	IF NOT EXIST "bin" MD "bin"
-	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler /Zi -Xcompiler /Fdbin// -Xlinker /DEBUG:FULL
+	"$(VCVARS)" && "$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slimepack" -Wno-deprecated-gpu-targets -I"include" -I"include/boinc/windows" -L"lib" -lboinc_api -lboinc -luser32 -m64 -O0 -Xcompiler /Zi -Xcompiler /Fdbin// -Xlinker /DEBUG:FULL
 
 linux:
 	mkdir -p "bin"
-	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include" -L"lib" -lboinc_api -lboinc -m64 -O3 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+
+	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slimepack" -Wno-deprecated-gpu-targets -I"include" -L"lib" -lboinc_api -lboinc -m64 -O3 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+
 
 linux-debug:
 	mkdir -p "bin"
-	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slime-clusters" -Wno-deprecated-gpu-targets -I"include" -L"lib" -lboinc_api -lboinc -m64 -O0 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+ -Xcompiler -g
+	"$(NVCC)/bin/nvcc" "src/main.cu" -o="bin/slimepack" -Wno-deprecated-gpu-targets -I"include" -L"lib" -lboinc_api -lboinc -m64 -O0 -Xcompiler -static-libgcc -Xcompiler -static-libstdc+ -Xcompiler -g
 	
 windows-clean:
 	IF EXIST "bin" RD /S /Q "bin"
