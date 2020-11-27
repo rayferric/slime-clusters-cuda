@@ -1,12 +1,13 @@
-# Slime Clusters CUDA
+# SlimePack
 
-CUDA C++ version of **[slime-clusters](https://github.com/rayferric/slime-clusters)**.
+CUDA powered tool to search for clusters of slime chunks among possible Minecraft world seeds.
 
 ## About
 
 ### Authors
 
 - Ray Ferric (**[rayferric](https://github.com/rayferric)**)
+- All Contributors
 
 ### License
 

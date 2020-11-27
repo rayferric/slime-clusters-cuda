@@ -1,16 +1,16 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Debug",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}\\bin\\slime-clusters.exe",
-            "symbolSearchPath":"${workspaceFolder}\\bin",
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "externalConsole": false,
-            "preLaunchTask": "Build Debug"
-        }
-    ]
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Debug",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}\\bin\\slime-clusters.exe",
+			"symbolSearchPath":"${workspaceFolder}\\bin",
+			"stopAtEntry": false,
+			"cwd": "${workspaceFolder}",
+			"externalConsole": false,
+			"preLaunchTask": "Build Debug"
+		}
+	]
 }

@@ -1,29 +1,29 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build",
-            "type": "shell",
-            "command": "make windows",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
-        },
-        {
-            "label": "Run",
-            "type": "shell",
-            "command": "${workspaceFolder}\\bin\\slime-clusters.exe",
-            "group": {
-                "kind": "test",
-                "isDefault": true
-            },
-            "dependsOn": "Build"
-        },
-        {
-            "label": "Build Debug",
-            "type": "shell",
-            "command": "make windows-debug",
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build",
+			"type": "shell",
+			"command": "make windows",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Run",
+			"type": "shell",
+			"command": "${workspaceFolder}\\bin\\slime-clusters.exe",
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"dependsOn": "Build"
+		},
+		{
+			"label": "Build Debug",
+			"type": "shell",
+			"command": "make windows-debug",
+		}
+	]
 }
